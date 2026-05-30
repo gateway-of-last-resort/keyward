@@ -2,6 +2,10 @@ package keys
 
 import (
 	"bytes"
+	"crypto/dsa"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,98 +19,128 @@ type Key struct {
 	PrivateKeyPath string
 	PublicKeyPath  string
 	HasPassphrase  bool
-	//Permissions    [2]os.FileMode // 0 for private, 1 for public
-	PrivatePerm os.FileMode
-	PublicPerm  os.FileMode
-	Algorithm   string
-	CreatedAt   time.Time
-	Fingerprint string
-	BitSize     int
+	PrivatePerm    os.FileMode
+	PublicPerm     os.FileMode
+	Algorithm      string
+	CreatedAt      time.Time
+	Fingerprint    string
+	BitSize        int
+}
+
+type keyPairs struct {
+	privatePath string
+	publicPath  string
 }
 
 func Parse(path string) ([]Key, error) {
-	//home, err := os.UserHomeDir()
-	//sshDir := filepath.Join(home, ".ssh")
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
 	}
 
-	pubMap := make(map[string]string)
-	var candidates []string
+	pairs := make(map[string]*keyPairs)
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			filename := entry.Name()
-			if strings.HasSuffix(filename, ".pub") {
-				pubMap[strings.TrimSuffix(filename, ".pub")] = filepath.Join(path, filename)
-			} else {
-				candidates = append(candidates, filepath.Join(path, filename))
-			}
+		if entry.IsDir() {
+			continue
+		}
+		filename := entry.Name()
+
+		baseName := strings.TrimSuffix(filename, ".pub")
+
+		if pairs[baseName] == nil {
+			pairs[baseName] = &keyPairs{}
+		}
+
+		fullPath := filepath.Join(path, filename)
+
+		if strings.HasSuffix(filename, ".pub") {
+			pairs[baseName].publicPath = fullPath
+		} else {
+			pairs[baseName].privatePath = fullPath
 		}
 	}
 
 	var listOfKeys []Key
 	privateFileHeader := []byte("-----BEGIN")
 
-	for _, candidate := range candidates {
-		filename := filepath.Base(candidate)
-		publicPath, ok := pubMap[filename]
+	for _, pair := range pairs {
+		var temp Key
+		isValid := false
+		var parsedPublicKey ssh.PublicKey
 
-		if !ok {
+		if pair.privatePath != "" {
+			privateData, err := os.ReadFile(pair.privatePath)
+			if err == nil && bytes.HasPrefix(privateData, privateFileHeader) {
+				temp.PrivateKeyPath = pair.privatePath
+
+				if stat, err := os.Stat(pair.privatePath); err == nil {
+					temp.PrivatePerm = stat.Mode().Perm()
+					temp.CreatedAt = stat.ModTime()
+				} else {
+					continue
+				}
+
+				rawKey, err := ssh.ParseRawPrivateKey(privateData)
+
+				var passphraseErr *ssh.PassphraseMissingError
+				if errors.As(err, &passphraseErr) {
+					isValid = true
+					temp.HasPassphrase = true
+				} else if err == nil {
+					isValid = true
+					switch pk := rawKey.(type) {
+					case *rsa.PrivateKey:
+						temp.BitSize = pk.N.BitLen()
+
+					case *ecdsa.PrivateKey:
+						temp.BitSize = pk.Curve.Params().BitSize
+
+					case ed25519.PrivateKey, *ed25519.PrivateKey:
+						temp.BitSize = 256
+
+					case *dsa.PrivateKey:
+						temp.BitSize = pk.PublicKey.Parameters.P.BitLen()
+					}
+
+					signer, err := ssh.NewSignerFromKey(rawKey)
+					if err == nil {
+						parsedPublicKey = signer.PublicKey()
+					}
+				}
+			}
+		}
+
+		if pair.publicPath != "" {
+			publicData, err := os.ReadFile(pair.publicPath)
+			if err == nil {
+				pubKey, _, _, _, err := ssh.ParseAuthorizedKey(publicData)
+				if err == nil {
+					temp.PublicKeyPath = pair.publicPath
+					isValid = true
+
+					if stat, err := os.Stat(pair.publicPath); err == nil {
+						temp.PublicPerm = stat.Mode().Perm()
+					}
+
+					if parsedPublicKey == nil {
+						parsedPublicKey = pubKey
+					}
+				}
+			}
+
+		}
+
+		if !isValid {
 			continue
 		}
 
-		privateKeyData, err := os.ReadFile(candidate)
-		if err != nil {
-			continue
+		if parsedPublicKey != nil {
+			temp.Algorithm = parsedPublicKey.Type()
+			temp.Fingerprint = ssh.FingerprintSHA256(parsedPublicKey)
 		}
-
-		if !bytes.HasPrefix(privateKeyData, privateFileHeader) {
-			continue
-		}
-
-		fileStatPrivate, err := os.Stat(candidate)
-		if err != nil {
-			continue
-		}
-
-		fileStatPublic, err := os.Stat(publicPath)
-		if err != nil {
-			continue
-		}
-
-		_, err = ssh.ParseRawPrivateKey(privateKeyData)
-		hasPassphrase := false
-
-		var passphraseErr *ssh.PassphraseMissingError
-		if errors.As(err, &passphraseErr) {
-			hasPassphrase = true
-		} else if err != nil {
-			continue
-		}
-
-		publicKeyData, err := os.ReadFile(publicPath)
-		if err != nil {
-			continue
-		}
-
-		pubKey, _, _, _, err := ssh.ParseAuthorizedKey(publicKeyData)
-		if err != nil {
-			continue
-		}
-
-		listOfKeys = append(listOfKeys, Key{
-			PrivateKeyPath: candidate,
-			PublicKeyPath:  publicPath,
-			HasPassphrase:  hasPassphrase,
-			PrivatePerm:    fileStatPrivate.Mode().Perm(),
-			PublicPerm:     fileStatPublic.Mode().Perm(),
-			Algorithm:      pubKey.Type(),
-			CreatedAt:      fileStatPrivate.ModTime(),
-			Fingerprint:    ssh.FingerprintSHA256(pubKey),
-		})
+		listOfKeys = append(listOfKeys, temp)
 
 	}
 
