@@ -137,7 +137,7 @@ func ParseKeys(path string) ([]Key, error) {
 		}
 
 		if parsedPublicKey != nil {
-			temp.Algorithm = strings.TrimSuffix(parsedPublicKey.Type(), "ssh-")
+			temp.Algorithm = strings.TrimPrefix(parsedPublicKey.Type(), "ssh-")
 			temp.Fingerprint = ssh.FingerprintSHA256(parsedPublicKey)
 		}
 		listOfKeys = append(listOfKeys, temp)
