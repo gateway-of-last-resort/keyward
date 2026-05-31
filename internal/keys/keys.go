@@ -32,7 +32,7 @@ type keyPairs struct {
 	publicPath  string
 }
 
-func Parse(path string) ([]Key, error) {
+func ParseKeys(path string) ([]Key, error) {
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -137,7 +137,7 @@ func Parse(path string) ([]Key, error) {
 		}
 
 		if parsedPublicKey != nil {
-			temp.Algorithm = parsedPublicKey.Type()
+			temp.Algorithm = strings.TrimSuffix(parsedPublicKey.Type(), "ssh-")
 			temp.Fingerprint = ssh.FingerprintSHA256(parsedPublicKey)
 		}
 		listOfKeys = append(listOfKeys, temp)
