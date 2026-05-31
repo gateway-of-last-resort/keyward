@@ -46,3 +46,8 @@ type ValidationResult struct {
 	Message string
 	Level   ValidationLevel
 }
+
+type ParamResult struct {
+	Value string
+	Line  int
+}

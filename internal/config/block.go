@@ -17,6 +17,18 @@ func GetParam(b *Block, key string) ([]string, bool) {
 	return values, len(values) > 0
 }
 
+func GetParamWithLine(b *Block, key string) ([]ParamResult, bool) {
+	var values []ParamResult
+
+	for _, token := range b.Tokens {
+		if token.Type == PARAM && strings.EqualFold(key, token.Key) {
+			values = append(values, ParamResult{Value: token.Value, Line: token.LineNum})
+		}
+	}
+
+	return values, len(values) > 0
+}
+
 func SetParam(b *Block, key string, values []string) bool {
 	var indices []int
 
