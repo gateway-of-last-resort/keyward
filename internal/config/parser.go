@@ -6,6 +6,48 @@ import (
 	"strings"
 )
 
+func parseParam(raw string) Token {
+	var t Token
+	t.Type = PARAM
+	t.Raw = raw
+
+	trimmed := strings.TrimSpace(t.Raw)
+
+	eqIdx := strings.Index(trimmed, "=")
+	spaceIdx := strings.Index(trimmed, " ")
+	var sepIdx int
+	var hasSep bool
+
+	switch {
+	case eqIdx == -1 && spaceIdx == -1:
+		t.Key = trimmed
+		t.Sep = " "
+
+	case eqIdx == -1:
+		sepIdx, hasSep = spaceIdx, true
+		t.Sep = " "
+
+	case spaceIdx == -1:
+		sepIdx, hasSep = eqIdx, true
+		t.Sep = "="
+
+	case eqIdx < spaceIdx:
+		sepIdx, hasSep = eqIdx, true
+		t.Sep = "="
+
+	default:
+		sepIdx, hasSep = spaceIdx, true
+		t.Sep = " "
+	}
+
+	if hasSep {
+		t.Key = strings.TrimSpace(trimmed[:sepIdx])
+		t.Value = strings.TrimSpace(trimmed[sepIdx+1:])
+	}
+
+	return t
+}
+
 func tokenize(data []byte) []Token {
 	lines := bytes.Split(data, []byte("\n"))
 	tokens := make([]Token, len(lines))
@@ -37,39 +79,7 @@ func tokenize(data []byte) []Token {
 				tokens[i].Value = value
 				tokens[i].Sep = " "
 			} else {
-				tokens[i].Type = PARAM
-
-				eqIdx := strings.Index(trimmed, "=")
-				spaceIdx := strings.Index(trimmed, " ")
-				var sepIdx int
-				var hasSep bool
-
-				switch {
-				case eqIdx == -1 && spaceIdx == -1:
-					tokens[i].Key = trimmed
-					tokens[i].Sep = " "
-
-				case eqIdx == -1:
-					sepIdx, hasSep = spaceIdx, true
-					tokens[i].Sep = " "
-
-				case spaceIdx == -1:
-					sepIdx, hasSep = eqIdx, true
-					tokens[i].Sep = "="
-
-				case eqIdx < spaceIdx:
-					sepIdx, hasSep = eqIdx, true
-					tokens[i].Sep = "="
-
-				default:
-					sepIdx, hasSep = spaceIdx, true
-					tokens[i].Sep = " "
-				}
-
-				if hasSep {
-					tokens[i].Key = strings.TrimSpace(trimmed[:sepIdx])
-					tokens[i].Value = strings.TrimSpace(trimmed[sepIdx+1:])
-				}
+				tokens[i] = parseParam(raw)
 			}
 		}
 	}
