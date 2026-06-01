@@ -113,7 +113,7 @@ func MoveBlock(c *Config, pattern string, toIdx int) bool {
 	return false
 }
 
-func Seach(c *Config, query string) []*Block {
+func Search(c *Config, query string) []*Block {
 
 	found := []*Block{}
 

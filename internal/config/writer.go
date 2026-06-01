@@ -74,7 +74,9 @@ func WriteAtomic(path string, data []byte) error {
 func backup(path string) error {
 
 	data, err := os.ReadFile(path)
-	if err != nil {
+	if os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
 		return err
 	}
 

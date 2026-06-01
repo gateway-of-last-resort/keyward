@@ -172,6 +172,17 @@ func ValidateConfig(c *Config) []ValidationResult {
 		for _, token := range starBlock.Tokens {
 			if token.Type == PARAM {
 				starParams[strings.ToLower(token.Key)] = true
+				if strings.EqualFold(token.Key, "StrictHostKeyChecking") {
+					if strings.EqualFold(token.Value, "no") {
+						results = append(results, ValidationResult{
+							Block:   starBlock,
+							Line:    token.LineNum,
+							Field:   "StrictHostKeyChecking",
+							Message: "StrictHostKeyChecking can't be 'no'",
+							Level:   LevelError,
+						})
+					}
+				}
 			}
 		}
 
