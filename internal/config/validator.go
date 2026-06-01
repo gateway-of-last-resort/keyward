@@ -57,6 +57,7 @@ func ValidateBlock(b *Block) []ValidationResult {
 					path = filepath.Join(home, path[2:])
 				}
 			}
+			path = os.ExpandEnv(path)
 			stat, err := os.Stat(path)
 
 			if os.IsNotExist(err) {
