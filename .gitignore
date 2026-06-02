@@ -28,6 +28,8 @@ go.work.sum
 # env filePriv
 .env
 
+.DS_Store
+
 # Editor/IDE
 .idea/
 # .vscode/
