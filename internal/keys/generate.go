@@ -29,8 +29,8 @@ var (
 type Algorithm string
 
 const (
-	AlgorithmEd25519 Algorithm = "ed25519"
-	AlgorithmRSA     Algorithm = "rsa"
+	AlgorithmEd25519 Algorithm = "ssh-ed25519"
+	AlgorithmRSA     Algorithm = "ssh-rsa"
 )
 
 type GenerateOptions struct {
@@ -144,7 +144,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 			return Key{}, errPubKey
 		}
 		pubPem = ssh.MarshalAuthorizedKey(sshPub)
-		
+
 	}
 
 	if privPem == nil {
@@ -196,7 +196,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		PrivatePerm:    0600,
 		PublicPerm:     0644,
 		Algorithm:      string(opts.Algorithm),
-		CreatedAt:      time.Now(),
+		ModifiedAt:     time.Now(),
 		Fingerprint:    ssh.FingerprintSHA256(sshPub),
 		BitSize:        bitSize,
 	}, nil

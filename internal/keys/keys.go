@@ -19,10 +19,11 @@ type Key struct {
 	PrivateKeyPath string
 	PublicKeyPath  string
 	HasPassphrase  bool
+	IsPublicOnly   bool
 	PrivatePerm    os.FileMode
 	PublicPerm     os.FileMode
 	Algorithm      string
-	CreatedAt      time.Time
+	ModifiedAt     time.Time
 	Fingerprint    string
 	BitSize        int
 }
@@ -32,7 +33,7 @@ type keyPairs struct {
 	publicPath  string
 }
 
-func ParseKeys(path string) ([]Key, error) {
+func Parse(path string) ([]Key, error) {
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -77,7 +78,7 @@ func ParseKeys(path string) ([]Key, error) {
 
 				if stat, err := os.Stat(pair.privatePath); err == nil {
 					temp.PrivatePerm = stat.Mode().Perm()
-					temp.CreatedAt = stat.ModTime()
+					temp.ModifiedAt = stat.ModTime()
 				} else {
 					continue
 				}
@@ -110,6 +111,8 @@ func ParseKeys(path string) ([]Key, error) {
 					}
 				}
 			}
+		} else {
+			temp.IsPublicOnly = true
 		}
 
 		if pair.publicPath != "" {
@@ -137,7 +140,7 @@ func ParseKeys(path string) ([]Key, error) {
 		}
 
 		if parsedPublicKey != nil {
-			temp.Algorithm = strings.TrimPrefix(parsedPublicKey.Type(), "ssh-")
+			temp.Algorithm = parsedPublicKey.Type()
 			temp.Fingerprint = ssh.FingerprintSHA256(parsedPublicKey)
 		}
 		listOfKeys = append(listOfKeys, temp)
