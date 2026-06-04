@@ -80,6 +80,7 @@ func tokenize(data []byte) []Token {
 				tokens[i].Sep = " "
 			} else {
 				tokens[i] = parseParam(raw)
+				tokens[i].LineNum = i + 1
 			}
 		}
 	}
