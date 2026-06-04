@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func serialize(c *Config) []byte {
+func Serialize(c *Config) []byte {
 	var sb = strings.Builder{}
 
 	newline := "\n"
@@ -41,7 +41,7 @@ func serialize(c *Config) []byte {
 			sb.WriteString(newline)
 		}
 	}
-	return []byte(sb.String())
+	return []byte(strings.TrimSuffix(sb.String(), newline))
 }
 
 func WriteAtomic(path string, data []byte) error {
@@ -139,7 +139,7 @@ func Save(c *Config) error {
 	if err := backup(c.Path); err != nil {
 		return err
 	}
-	data := serialize(c)
+	data := Serialize(c)
 	if err := WriteAtomic(c.Path, data); err != nil {
 		return err
 	}
