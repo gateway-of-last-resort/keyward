@@ -68,7 +68,7 @@ func ValidateBlock(b *Block) []ValidationResult {
 					Message: "IdentityFile does not exist",
 					Level:   LevelWarning,
 				})
-			} else {
+			} else if err == nil {
 				if stat.Mode().Perm() != os.FileMode(0600) {
 					results = append(results, ValidationResult{
 						Block:   b,
@@ -135,6 +135,23 @@ func ValidateBlock(b *Block) []ValidationResult {
 
 func ValidateConfig(c *Config) []ValidationResult {
 	results := []ValidationResult{}
+
+	globalResults := ValidateBlock(&c.Global)
+	results = append(results, globalResults...)
+
+	for _, token := range c.Global.Tokens {
+		if token.Type == PARAM &&
+			strings.EqualFold(token.Key, "StrictHostKeyChecking") &&
+			strings.EqualFold(token.Value, "no") {
+			results = append(results, ValidationResult{
+				Block:   &c.Global,
+				Line:    token.LineNum,
+				Field:   "StrictHostKeyChecking",
+				Message: "StrictHostKeyChecking no in global block affects all hosts",
+				Level:   LevelError,
+			})
+		}
+	}
 
 	hosts := map[string]int{}
 
