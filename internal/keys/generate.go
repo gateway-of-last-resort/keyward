@@ -34,12 +34,13 @@ const (
 )
 
 type GenerateOptions struct {
-	Algorithm  Algorithm
-	Filename   string
-	Overwrite  bool
-	BitSize    int
-	Comment    string
-	Passphrase string
+	Algorithm            Algorithm
+	Filename             string
+	Overwrite            bool
+	BitSize              int
+	Comment              string
+	Passphrase           string
+	AllowEmptyPassphrase bool
 }
 
 func (a Algorithm) IsValid() bool {
@@ -50,6 +51,10 @@ func (a Algorithm) IsValid() bool {
 		return false
 	}
 }
+
+// risks of passphrase exposure in core dumps or memory inspection tools.
+// TODO: change Passphrase field type from string to []byte in GenerateOptions,
+// then explicitly zero it after use: for i := range opts.Passphrase { opts.Passphrase[i] = 0 }
 
 func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 
@@ -73,7 +78,9 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 	}
 
 	if opts.Passphrase == "" {
-		return Key{}, ErrEmptyPassphrase
+		if !opts.AllowEmptyPassphrase {
+			return Key{}, ErrEmptyPassphrase
+		}
 	}
 
 	privatePath := filepath.Join(dir, opts.Filename)
@@ -105,7 +112,15 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		if err != nil {
 			return Key{}, err
 		}
-		privBlock, err := ssh.MarshalPrivateKeyWithPassphrase(edPriv, opts.Comment, []byte(opts.Passphrase))
+
+		var privBlock *pem.Block
+
+		if !opts.AllowEmptyPassphrase {
+			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(edPriv, opts.Comment, []byte(opts.Passphrase))
+		} else {
+			privBlock, err = ssh.MarshalPrivateKey(edPriv, opts.Comment)
+		}
+
 		if err != nil {
 			return Key{}, err
 		}
@@ -133,7 +148,14 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		if err != nil {
 			return Key{}, err
 		}
-		privBlock, err := ssh.MarshalPrivateKeyWithPassphrase(rsaPriv, opts.Comment, []byte(opts.Passphrase))
+
+		var privBlock *pem.Block
+
+		if !opts.AllowEmptyPassphrase {
+			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(rsaPriv, opts.Comment, []byte(opts.Passphrase))
+		} else {
+			privBlock, err = ssh.MarshalPrivateKey(rsaPriv, opts.Comment)
+		}
 		if err != nil {
 			return Key{}, err
 		}
@@ -199,5 +221,6 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		ModifiedAt:     time.Now(),
 		Fingerprint:    ssh.FingerprintSHA256(sshPub),
 		BitSize:        bitSize,
+		Comment:        opts.Comment,
 	}, nil
 }
