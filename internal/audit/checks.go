@@ -23,15 +23,13 @@ func resolveKeyPath(key keys.Key) string {
 }
 
 func expandPath(path string) string {
-	var expandedPath string
 	if strings.HasPrefix(path, "~/") {
 		home, err := os.UserHomeDir()
 		if err == nil {
-			expandedPath = filepath.Join(home, path[2:])
+			path = filepath.Join(home, path[2:])
 		}
 	}
-	expandedPath = os.ExpandEnv(path)
-	return expandedPath
+	return os.ExpandEnv(path)
 }
 
 func checkPassphrase(key keys.Key) []AuditResult {
