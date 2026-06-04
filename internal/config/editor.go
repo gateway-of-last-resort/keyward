@@ -99,11 +99,6 @@ func MoveBlock(c *Config, pattern string, toIdx int) bool {
 	if idx != -1 {
 		movedBlock := c.Blocks[idx]
 		c.Blocks = slices.Delete(c.Blocks, idx, idx+1)
-
-		if toIdx > idx {
-			toIdx--
-		}
-
 		c.Blocks = slices.Insert(c.Blocks, toIdx, movedBlock)
 		c.Modified = true
 
