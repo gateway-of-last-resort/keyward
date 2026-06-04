@@ -46,6 +46,7 @@ func SetParam(b *Block, key string, values []string) bool {
 
 	for i := 0; i < n; i++ {
 		b.Tokens[indices[i]].Value = values[i]
+		b.Tokens[indices[i]].Raw = ""
 	}
 
 	if len(values) > len(indices) {
@@ -56,6 +57,7 @@ func SetParam(b *Block, key string, values []string) bool {
 				Key:   key,
 				Value: values[i],
 				Sep:   " ",
+				Raw:   "",
 			}
 			b.Tokens = slices.Insert(b.Tokens, insertAt, newToken)
 			insertAt++
@@ -126,21 +128,38 @@ func ToggleLine(b *Block, lineNum int) bool {
 			}
 			if b.Tokens[i].Type == PARAM {
 				b.Tokens[i].Type = COMMENT
-				b.Tokens[i].Raw = "#" + b.Tokens[i].Raw
+				b.Tokens[i].Raw = "    # " + strings.TrimSpace(b.Tokens[i].Raw)
 				b.Tokens[i].Value = ""
 				b.Tokens[i].Sep = ""
 				b.Tokens[i].Key = ""
 
 				return true
 			} else {
-				b.Tokens[i].Raw = strings.TrimPrefix(b.Tokens[i].Raw, "# ")
-				b.Tokens[i].Raw = strings.TrimPrefix(b.Tokens[i].Raw, "#")
-				newToken := parseParam(b.Tokens[i].Raw)
+				original := b.Tokens[i]
 
+				trimmed := strings.TrimSpace(b.Tokens[i].Raw)
+
+				var stripped string
+				if strings.HasPrefix(trimmed, "# ") {
+					stripped = trimmed[2:]
+				} else if strings.HasPrefix(trimmed, "#") {
+					stripped = trimmed[1:]
+				} else {
+					stripped = trimmed
+				}
+
+				newToken := parseParam("    " + stripped)
+
+				if newToken.Key == "" || !isValidSSHKeyword(newToken.Key) {
+					b.Tokens[i] = original
+					return false
+				}
+
+				b.Tokens[i].Raw = "    " + stripped
 				b.Tokens[i].Key = newToken.Key
 				b.Tokens[i].Sep = newToken.Sep
 				b.Tokens[i].Value = newToken.Value
-				b.Tokens[i].Type = newToken.Type
+				b.Tokens[i].Type = PARAM
 
 				return true
 			}
