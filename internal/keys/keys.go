@@ -16,18 +16,17 @@ import (
 )
 
 type Key struct {
-	PrivateKeyPath       string
-	PublicKeyPath        string
-	HasPassphrase        bool
-	AllowEmptyPassphrase bool
-	IsPublicOnly         bool
-	PrivatePerm          os.FileMode
-	PublicPerm           os.FileMode
-	Algorithm            string
-	ModifiedAt           time.Time
-	Fingerprint          string
-	BitSize              int
-	Comment              string
+	PrivateKeyPath string
+	PublicKeyPath  string
+	HasPassphrase  bool
+	IsPublicOnly   bool
+	PrivatePerm    os.FileMode
+	PublicPerm     os.FileMode
+	Algorithm      string
+	ModifiedAt     time.Time
+	Fingerprint    string
+	BitSize        int
+	Comment        string
 }
 
 type keyPairs struct {
