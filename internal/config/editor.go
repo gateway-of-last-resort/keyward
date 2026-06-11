@@ -8,7 +8,7 @@ import (
 func findBlockIdx(c *Config, pattern string) int {
 	idx := -1
 	for i := range c.Blocks {
-		if c.Blocks[i].Pattern == pattern {
+		if strings.EqualFold(c.Blocks[i].Pattern, pattern) {
 			idx = i
 			break
 		}
