@@ -69,12 +69,13 @@ func ValidateBlock(b *Block) []ValidationResult {
 					Level:   LevelWarning,
 				})
 			} else if err == nil {
-				if stat.Mode().Perm() != os.FileMode(0600) {
+				perm := stat.Mode().Perm()
+				if perm != 0600 && perm != 0400 {
 					results = append(results, ValidationResult{
 						Block:   b,
 						Line:    file.Line,
 						Field:   "IdentityFile",
-						Message: "IdentityFile must be 0600",
+						Message: "IdentityFile permissions should be 0600 or 0400",
 						Level:   LevelWarning,
 					})
 				}
