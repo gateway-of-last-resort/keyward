@@ -115,7 +115,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 
 		var privBlock *pem.Block
 
-		if !opts.AllowEmptyPassphrase {
+		if opts.Passphrase != "" {
 			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(edPriv, opts.Comment, []byte(opts.Passphrase))
 		} else {
 			privBlock, err = ssh.MarshalPrivateKey(edPriv, opts.Comment)
@@ -151,7 +151,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 
 		var privBlock *pem.Block
 
-		if !opts.AllowEmptyPassphrase {
+		if opts.Passphrase != "" {
 			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(rsaPriv, opts.Comment, []byte(opts.Passphrase))
 		} else {
 			privBlock, err = ssh.MarshalPrivateKey(rsaPriv, opts.Comment)
@@ -190,6 +190,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 	}
 
 	if err := filePriv.Close(); err != nil {
+		os.Remove(privatePath)
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, privatePath)
 	}
 
@@ -214,7 +215,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 	return Key{
 		PrivateKeyPath: privatePath,
 		PublicKeyPath:  publicPath,
-		HasPassphrase:  true,
+		HasPassphrase:  opts.Passphrase != "",
 		PrivatePerm:    0600,
 		PublicPerm:     0644,
 		Algorithm:      string(opts.Algorithm),
