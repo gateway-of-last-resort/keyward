@@ -17,6 +17,7 @@ import (
 
 var (
 	ErrDirNotFound      = errors.New("target directory not found")
+	ErrReadDirFailed    = errors.New("failed to read key directory")
 	ErrInvalidAlgorithm = errors.New("invalid algorithm")
 	ErrMissingFilename  = errors.New("missing filename")
 	ErrEmptyPassphrase  = errors.New("empty passphrase")

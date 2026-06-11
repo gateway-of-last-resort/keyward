@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,10 @@ func Parse(path string) ([]Key, error) {
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s", ErrDirNotFound, path)
+		}
+		return nil, fmt.Errorf("%w: %w", ErrReadDirFailed, err)
 	}
 
 	pairs := make(map[string]*keyPairs)
