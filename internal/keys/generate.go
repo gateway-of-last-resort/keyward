@@ -183,32 +183,38 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		return Key{}, fmt.Errorf("%w: %s", ErrCreateFailed, privatePath)
 	}
 
+	cleanup := func() {
+		removeErr := errors.Join(os.Remove(privatePath), os.Remove(publicPath))
+		_ = removeErr
+	}
+
 	_, err = filePriv.Write(privPem)
 	if err != nil {
 		filePriv.Close()
+		cleanup()
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, privatePath)
 	}
 
 	if err := filePriv.Close(); err != nil {
-		os.Remove(privatePath)
+		cleanup()
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, privatePath)
 	}
 
 	filePub, err := os.OpenFile(publicPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		os.Remove(privatePath)
+		cleanup()
 		return Key{}, fmt.Errorf("%w: %s", ErrCreateFailed, publicPath)
 	}
 
 	_, err = filePub.Write(pubPem)
 	if err != nil {
 		filePub.Close()
-		os.Remove(privatePath)
-		os.Remove(publicPath)
+		cleanup()
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, publicPath)
 	}
 
 	if err := filePub.Close(); err != nil {
+		cleanup()
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, publicPath)
 	}
 
