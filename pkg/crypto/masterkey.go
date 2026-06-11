@@ -20,6 +20,7 @@ var (
 	ErrCorruptedMasterKey = errors.New("master key file is corrupted")
 	ErrUnsupportedVersion = errors.New("unsupported master key version")
 	ErrWriteFailed        = errors.New("failed to write master key file")
+	ErrEmptyPassword      = errors.New("master key password must not be empty")
 )
 
 const (
@@ -102,6 +103,10 @@ func writeMasterKey(path string, identity *age.X25519Identity, password string) 
 }
 
 func InitMasterKey(path, password string) (age.Identity, error) {
+
+	if password == "" {
+		return nil, ErrEmptyPassword
+	}
 
 	_, err := os.Stat(path)
 	if err == nil {
@@ -194,6 +199,10 @@ func LoadMasterKey(path, password string) (age.Identity, error) {
 }
 
 func ChangeMasterKeyPassword(path, oldPassword, newPassword string) error {
+
+	if newPassword == "" {
+		return ErrEmptyPassword
+	}
 
 	identity, err := LoadMasterKey(path, oldPassword)
 	if err != nil {
