@@ -23,8 +23,9 @@ var (
 	ErrEmptyPassphrase  = errors.New("empty passphrase")
 	ErrBitSizeTooSmall  = errors.New("bit size must be at least 2048")
 	ErrKeyAlreadyExists = errors.New("key already exists")
-	ErrWriteFailed      = errors.New("failed to write key file")
-	ErrCreateFailed     = errors.New("failed to create key file")
+	ErrWriteFailed        = errors.New("failed to write key file")
+	ErrCreateFailed       = errors.New("failed to create key file")
+	ErrEncodePrivateKey   = errors.New("failed to encode private key")
 )
 
 type Algorithm string
@@ -171,7 +172,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 	}
 
 	if privPem == nil {
-		return Key{}, fmt.Errorf("failed to encode private key")
+		return Key{}, ErrEncodePrivateKey
 	}
 
 	if opts.Comment != "" {

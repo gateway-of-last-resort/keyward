@@ -84,8 +84,6 @@ func Parse(path string) ([]Key, error) {
 				if stat, err := os.Stat(pair.privatePath); err == nil {
 					temp.PrivatePerm = stat.Mode().Perm()
 					temp.ModifiedAt = stat.ModTime()
-				} else {
-					continue
 				}
 
 				rawKey, err := ssh.ParseRawPrivateKey(privateData)
