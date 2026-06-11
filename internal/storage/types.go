@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// KeyMetadata holds user-managed metadata for a single SSH key, keyed by fingerprint.
 type KeyMetadata struct {
 	Fingerprint   string
 	Tags          []string
@@ -13,6 +14,7 @@ type KeyMetadata struct {
 	LinkedHosts   []string
 }
 
+// Store is the in-memory representation of the encrypted metadata store.
 type Store struct {
 	Keys    map[string]KeyMetadata
 	SavedAt time.Time

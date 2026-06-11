@@ -14,6 +14,7 @@ import (
 	"github.com/gateway-of-last-resort/ssh-vault/pkg/crypto"
 )
 
+// Init creates the vault directory structure under dir with 0700 permissions.
 func Init(dir string) error {
 	dirs := []string{
 		dir,
@@ -29,6 +30,8 @@ func Init(dir string) error {
 	return nil
 }
 
+// Load decrypts and deserialises the metadata store from dir.
+// Returns an empty Store if no metadata file exists yet.
 func Load(dir string, identity age.Identity) (Store, error) {
 
 	metaPath := filepath.Join(dir, metadataFile)
@@ -66,6 +69,7 @@ func Load(dir string, identity age.Identity) (Store, error) {
 
 }
 
+// Save encrypts and atomically writes the store to dir/metadata.age.
 func Save(s *Store, dir string, identity age.Identity) error {
 
 	s.SavedAt = time.Now()
@@ -124,6 +128,7 @@ func Save(s *Store, dir string, identity age.Identity) error {
 	return nil
 }
 
+// Get returns the metadata for the given fingerprint or ErrNotFound.
 func Get(s Store, fingerprint string) (KeyMetadata, error) {
 
 	if fingerprint == "" {
@@ -138,6 +143,7 @@ func Get(s Store, fingerprint string) (KeyMetadata, error) {
 	return meta, nil
 }
 
+// Put inserts meta into the store. Returns ErrAlreadyExists if the fingerprint is taken.
 func Put(s *Store, meta KeyMetadata) error {
 
 	if meta.Fingerprint == "" {
@@ -160,6 +166,7 @@ func Put(s *Store, meta KeyMetadata) error {
 	return nil
 }
 
+// Update applies fn to the metadata entry identified by fingerprint.
 func Update(s *Store, fingerprint string, fn func(*KeyMetadata)) error {
 
 	if fingerprint == "" {
@@ -180,6 +187,7 @@ func Update(s *Store, fingerprint string, fn func(*KeyMetadata)) error {
 	return nil
 }
 
+// Delete removes the metadata entry for fingerprint. Returns ErrNotFound if absent.
 func Delete(s *Store, fingerprint string) error {
 	if fingerprint == "" {
 		return ErrInvalidFingerprint
@@ -194,6 +202,7 @@ func Delete(s *Store, fingerprint string) error {
 	return nil
 }
 
+// List returns all metadata entries sorted by fingerprint.
 func List(s Store) []KeyMetadata {
 	result := make([]KeyMetadata, 0, len(s.Keys))
 

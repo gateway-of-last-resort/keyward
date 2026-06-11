@@ -102,6 +102,7 @@ func writeMasterKey(path string, identity *age.X25519Identity, password string) 
 	return nil
 }
 
+// InitMasterKey generates a new age X25519 identity, encrypts it with password, and writes it to path.
 func InitMasterKey(path, password string) (age.Identity, error) {
 
 	if password == "" {
@@ -126,6 +127,7 @@ func InitMasterKey(path, password string) (age.Identity, error) {
 	return identity, nil
 }
 
+// LoadMasterKey reads path, derives the KEK from password via Argon2id, and returns the decrypted identity.
 func LoadMasterKey(path, password string) (age.Identity, error) {
 	_, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -198,6 +200,8 @@ func LoadMasterKey(path, password string) (age.Identity, error) {
 	return identity, nil
 }
 
+// ChangeMasterKeyPassword re-encrypts the master key at path with newPassword.
+// The old file is backed up to path+".bak" and removed on success.
 func ChangeMasterKeyPassword(path, oldPassword, newPassword string) error {
 
 	if newPassword == "" {

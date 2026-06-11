@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// Serialize renders the config back to bytes, preserving original raw lines where unchanged.
 func Serialize(c *Config) []byte {
 	var sb = strings.Builder{}
 
@@ -44,6 +45,7 @@ func Serialize(c *Config) []byte {
 	return []byte(strings.TrimSuffix(sb.String(), newline))
 }
 
+// WriteAtomic writes data to path via a temp file + rename, then sets permissions to 0600.
 func WriteAtomic(path string, data []byte) error {
 
 	dir := filepath.Dir(path)
@@ -134,6 +136,7 @@ func rotateBackup(dir string) error {
 	return errors.Join(errs...)
 }
 
+// Save serialises c to disk, creates backups, rotates old backup copies, and clears Modified.
 func Save(c *Config) error {
 
 	if err := backup(c.Path); err != nil {

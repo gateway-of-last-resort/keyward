@@ -25,6 +25,7 @@ func serializeBlock(b *Block) string {
 	return sb.String()
 }
 
+// FindBlock returns a pointer to the block matching pattern (case-insensitive), or nil.
 func FindBlock(c *Config, pattern string) *Block {
 	for i := range c.Blocks {
 		if strings.EqualFold(c.Blocks[i].Pattern, pattern) {
@@ -34,6 +35,7 @@ func FindBlock(c *Config, pattern string) *Block {
 	return nil
 }
 
+// AddBlock appends a new Host block with the given pattern and sets Modified.
 func AddBlock(c *Config, pattern string) {
 	hostToken := Token{
 		Type:  HOST,
@@ -50,6 +52,7 @@ func AddBlock(c *Config, pattern string) {
 	c.Modified = true
 }
 
+// RemoveBlock deletes the block matching pattern and sets Modified. Returns false if not found.
 func RemoveBlock(c *Config, pattern string) bool {
 
 	idx := findBlockIdx(c, pattern)
@@ -62,6 +65,7 @@ func RemoveBlock(c *Config, pattern string) bool {
 	return false
 }
 
+// DuplicateBlock copies the block matching pattern to a new block with newPattern.
 func DuplicateBlock(c *Config, pattern, newPattern string) bool {
 
 	idx := findBlockIdx(c, pattern)
@@ -85,6 +89,7 @@ func DuplicateBlock(c *Config, pattern, newPattern string) bool {
 	return false
 }
 
+// MoveBlock repositions the block matching pattern to toIdx (clamped to valid range).
 func MoveBlock(c *Config, pattern string, toIdx int) bool {
 
 	idx := findBlockIdx(c, pattern)
@@ -108,6 +113,7 @@ func MoveBlock(c *Config, pattern string, toIdx int) bool {
 	return false
 }
 
+// Search returns blocks whose Pattern, HostName, or User contains query (case-insensitive).
 func Search(c *Config, query string) []*Block {
 
 	found := []*Block{}
@@ -150,6 +156,7 @@ func Search(c *Config, query string) []*Block {
 	return found
 }
 
+// Reset restores c to the state captured in c.Original without re-reading the file.
 func Reset(c *Config) {
 	fresh := ParseBytes(c.Path, c.Original)
 	*c = fresh
@@ -158,6 +165,7 @@ func Reset(c *Config) {
 // TODO: improve to a line-by-line diff with --- / +++ format,
 // currently only tracks added, removed and modified blocks by pattern
 
+// Diff returns a list of added/modified/removed block patterns relative to c.Original.
 func Diff(c *Config) []string {
 	original := ParseBytes(c.Path, c.Original)
 

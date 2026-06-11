@@ -138,6 +138,7 @@ func group(tokens []Token) (Block, []Block) {
 	return global, blocks
 }
 
+// ParseBytes parses an SSH config from data and associates it with path.
 func ParseBytes(path string, data []byte) Config {
 	tokens := tokenize(data)
 	global, blocks := group(tokens)
@@ -151,6 +152,7 @@ func ParseBytes(path string, data []byte) Config {
 	}
 }
 
+// ParseFile reads path from disk and parses it as an SSH config.
 func ParseFile(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

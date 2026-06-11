@@ -17,6 +17,7 @@ import (
 	"strings"
 )
 
+// ValidateBlock checks a single Host block for common misconfigurations.
 func ValidateBlock(b *Block) []ValidationResult {
 
 	results := []ValidationResult{}
@@ -134,6 +135,7 @@ func ValidateBlock(b *Block) []ValidationResult {
 	return results
 }
 
+// ValidateConfig checks the full config for duplicate hosts and cross-block conflicts.
 func ValidateConfig(c *Config) []ValidationResult {
 	results := []ValidationResult{}
 

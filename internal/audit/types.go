@@ -7,6 +7,7 @@ import (
 	"github.com/gateway-of-last-resort/ssh-vault/internal/keys"
 )
 
+// Severity indicates the risk level of an audit finding.
 type Severity string
 
 const (
@@ -15,6 +16,7 @@ const (
 	Info     Severity = "INFO"
 )
 
+// Category groups audit findings by the subsystem they relate to.
 type Category string
 
 const (
@@ -23,6 +25,7 @@ const (
 	CategorySystem Category = "Category System"
 )
 
+// Grade is the letter score assigned to an AuditReport (A–F).
 type Grade string
 
 const (
@@ -33,6 +36,7 @@ const (
 	GradeF Grade = "F"
 )
 
+// AuditResult is a single finding produced by a check function.
 type AuditResult struct {
 	KeyPath  string
 	Severity Severity
@@ -41,6 +45,7 @@ type AuditResult struct {
 	Fix      string
 }
 
+// AuditReport is the aggregated result of a full audit run.
 type AuditReport struct {
 	Results       []AuditResult
 	Points        int
@@ -51,8 +56,11 @@ type AuditReport struct {
 	InfoCount     int
 }
 
+// KeyCheck is a check function that inspects a single SSH key.
 type KeyCheck func(keys.Key) []AuditResult
 
+// ConfigCheck is a check function that inspects the SSH config.
 type ConfigCheck func(*config.Config) []AuditResult
 
+// SystemCheck is a check function that inspects the host environment.
 type SystemCheck func() []AuditResult

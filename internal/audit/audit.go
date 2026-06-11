@@ -44,6 +44,7 @@ func calcReport(results []AuditResult) (points int, grade Grade, critical, warni
 	return points, grade, critical, warning, info
 }
 
+// Run executes all key, config, and system checks and returns a scored AuditReport.
 func Run(allKeys []keys.Key, cfg *config.Config, sshDir string) AuditReport {
 	keyChecks := []KeyCheck{
 		checkPassphrase,

@@ -28,6 +28,7 @@ var (
 	ErrEncodePrivateKey   = errors.New("failed to encode private key")
 )
 
+// Algorithm is the SSH key algorithm used for generation.
 type Algorithm string
 
 const (
@@ -35,6 +36,7 @@ const (
 	AlgorithmRSA     Algorithm = "ssh-rsa"
 )
 
+// GenerateOptions configures SSH key generation.
 type GenerateOptions struct {
 	Algorithm            Algorithm
 	Filename             string
@@ -45,6 +47,7 @@ type GenerateOptions struct {
 	AllowEmptyPassphrase bool
 }
 
+// IsValid reports whether a is a supported generation algorithm.
 func (a Algorithm) IsValid() bool {
 	switch a {
 	case AlgorithmEd25519, AlgorithmRSA:
@@ -58,6 +61,8 @@ func (a Algorithm) IsValid() bool {
 // TODO: change Passphrase field type from string to []byte in GenerateOptions,
 // then explicitly zero it after use: for i := range opts.Passphrase { opts.Passphrase[i] = 0 }
 
+// GenerateKeys creates a new SSH key pair in dir according to opts.
+// Ed25519 ignores BitSize; RSA defaults to 4096 when BitSize is 0.
 func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 
 	info, errDir := os.Stat(dir)

@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// Key represents a parsed SSH key pair (or public-only key) found on disk.
 type Key struct {
 	PrivateKeyPath string
 	PublicKeyPath  string
@@ -35,6 +36,8 @@ type keyPairs struct {
 	publicPath  string
 }
 
+// Parse scans path for SSH key pairs and returns all recognised keys.
+// Returned order is non-deterministic; sorting is delegated to the caller.
 func Parse(path string) ([]Key, error) {
 
 	entries, err := os.ReadDir(path)

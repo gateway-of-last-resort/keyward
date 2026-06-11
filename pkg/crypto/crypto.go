@@ -16,10 +16,12 @@ var (
 	ErrDecryptFailed = errors.New("decryption failed")
 )
 
+// ZeroBytes overwrites b with zeros to clear sensitive key material from memory.
 func ZeroBytes(b []byte) {
 	clear(b)
 }
 
+// Encrypt encrypts data for recipient using age and returns the ciphertext.
 func Encrypt(data []byte, recipient age.Recipient) ([]byte, error) {
 
 	if recipient == nil {
@@ -49,6 +51,7 @@ func Encrypt(data []byte, recipient age.Recipient) ([]byte, error) {
 
 }
 
+// Decrypt decrypts age ciphertext using identity and returns the plaintext.
 func Decrypt(ciphertext []byte, identity age.Identity) ([]byte, error) {
 	if identity == nil {
 		return nil, ErrNilIdentity

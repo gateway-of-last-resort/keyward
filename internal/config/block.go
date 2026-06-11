@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// GetParam returns all values for key in b (case-insensitive). A key may appear more than once.
 func GetParam(b *Block, key string) ([]string, bool) {
 	var values []string
 
@@ -17,6 +18,7 @@ func GetParam(b *Block, key string) ([]string, bool) {
 	return values, len(values) > 0
 }
 
+// GetParamWithLine is like GetParam but also returns the line number of each occurrence.
 func GetParamWithLine(b *Block, key string) ([]ParamResult, bool) {
 	var values []ParamResult
 
@@ -29,6 +31,7 @@ func GetParamWithLine(b *Block, key string) ([]ParamResult, bool) {
 	return values, len(values) > 0
 }
 
+// SetParam updates existing key tokens with values, inserting or removing tokens as needed.
 func SetParam(b *Block, key string, values []string) bool {
 	var indices []int
 
@@ -72,6 +75,8 @@ func SetParam(b *Block, key string, values []string) bool {
 	return true
 }
 
+// RemoveParam removes the first occurrence of key from b.
+// Note: a key may appear multiple times in a valid SSH config (e.g. IdentityFile); only the first is removed.
 func RemoveParam(b *Block, key string) bool {
 
 	for i, token := range b.Tokens {
@@ -83,6 +88,7 @@ func RemoveParam(b *Block, key string) bool {
 	return false
 }
 
+// AddParam appends a new key/value token after the last existing parameter in b.
 func AddParam(b *Block, key string, value string) {
 	var idx int
 
@@ -106,6 +112,7 @@ func AddParam(b *Block, key string, value string) {
 
 }
 
+// RenameHost updates the Host token value and b.Pattern to pattern.
 func RenameHost(b *Block, pattern string) {
 
 	for i := range b.Tokens {
@@ -118,6 +125,8 @@ func RenameHost(b *Block, pattern string) {
 	b.Pattern = pattern
 }
 
+// ToggleLine comments out a PARAM line or restores a COMMENT line back to PARAM.
+// Returns false if the line cannot be toggled (HOST, MATCH, EMPTY, or unparseable comment).
 func ToggleLine(b *Block, lineNum int) bool {
 
 	for i := range b.Tokens {
