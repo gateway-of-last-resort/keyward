@@ -12,7 +12,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const maxKeyAge = 6 * 30 * 24 * time.Hour
+const maxKeyAge = 12 * 30 * 24 * time.Hour
 
 func resolveKeyPath(key keys.Key) string {
 	keyPath := key.PrivateKeyPath
@@ -49,13 +49,24 @@ func checkPassphrase(key keys.Key) []AuditResult {
 			_, err := ssh.ParseRawPrivateKey(data)
 
 			var passphraseErr *ssh.PassphraseMissingError
-			if !errors.As(err, &passphraseErr) {
+			switch {
+			case errors.As(err, &passphraseErr):
+				// key is protected — OK
+			case err == nil:
 				results = append(results, AuditResult{
 					KeyPath:  key.PrivateKeyPath,
 					Severity: Critical,
 					Category: CategoryKey,
 					Message:  "Private key must have passphrase",
-					Fix:      "Use ssh-vault to generate a new Ed25519 key", // (press 'g')
+					Fix:      "Use ssh-vault to generate a new Ed25519 key",
+				})
+			default:
+				results = append(results, AuditResult{
+					KeyPath:  key.PrivateKeyPath,
+					Severity: Warning,
+					Category: CategoryKey,
+					Message:  "Could not parse private key",
+					Fix:      "Check that the key file is valid and not corrupted",
 				})
 			}
 		}
@@ -115,7 +126,7 @@ func checkBitSize(key keys.Key) []AuditResult {
 				KeyPath:  keyPath,
 				Severity: Info,
 				Category: CategoryKey,
-				Message:  "Bit size should be greater than 4096",
+				Message:  "Bit size should be >= 4096",
 				Fix:      "Use ssh-vault to regenerate this key with 4096 bits", // (press 'g')
 			})
 
