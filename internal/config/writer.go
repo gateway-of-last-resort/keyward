@@ -155,5 +155,6 @@ func Save(c *Config) error {
 	}
 
 	c.Modified = false
+	c.Original = data
 	return nil
 }
