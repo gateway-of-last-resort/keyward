@@ -128,7 +128,7 @@ func ToggleLine(b *Block, lineNum int) bool {
 			}
 			if b.Tokens[i].Type == PARAM {
 				b.Tokens[i].Type = COMMENT
-				b.Tokens[i].Raw = "    # " + strings.TrimSpace(b.Tokens[i].Raw)
+				b.Tokens[i].Raw = "# " + b.Tokens[i].Raw
 				b.Tokens[i].Value = ""
 				b.Tokens[i].Sep = ""
 				b.Tokens[i].Key = ""
@@ -137,25 +137,28 @@ func ToggleLine(b *Block, lineNum int) bool {
 			} else {
 				original := b.Tokens[i]
 
-				trimmed := strings.TrimSpace(b.Tokens[i].Raw)
+				raw := b.Tokens[i].Raw
+				trimmedLeft := strings.TrimLeft(raw, " \t")
+				leading := raw[:len(raw)-len(trimmedLeft)]
 
-				var stripped string
-				if strings.HasPrefix(trimmed, "# ") {
-					stripped = trimmed[2:]
-				} else if strings.HasPrefix(trimmed, "#") {
-					stripped = trimmed[1:]
+				var content string
+				if strings.HasPrefix(trimmedLeft, "# ") {
+					content = trimmedLeft[2:]
+				} else if strings.HasPrefix(trimmedLeft, "#") {
+					content = trimmedLeft[1:]
 				} else {
-					stripped = trimmed
+					content = trimmedLeft
 				}
 
-				newToken := parseParam("    " + stripped)
+				stripped := leading + content
+				newToken := parseParam(stripped)
 
 				if newToken.Key == "" || !isValidSSHKeyword(newToken.Key) {
 					b.Tokens[i] = original
 					return false
 				}
 
-				b.Tokens[i].Raw = "    " + stripped
+				b.Tokens[i].Raw = stripped
 				b.Tokens[i].Key = newToken.Key
 				b.Tokens[i].Sep = newToken.Sep
 				b.Tokens[i].Value = newToken.Value
