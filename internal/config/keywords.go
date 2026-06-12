@@ -41,12 +41,18 @@ var numericKeys = map[string]struct{}{
 }
 
 var boolKeys = map[string]struct{}{
-	"forwardagent": {}, "addkeystoagent": {}, "forwardx11": {}, "forwardx11trusted": {},
+	"forwardx11": {}, "forwardx11trusted": {},
 	"compression": {}, "batchmode": {}, "canonicalizehostname": {},
 	"exitonforwardfailure": {}, "permitlocalcommand": {}, "visualhostkey": {},
 	"hashknownhosts": {}, "checkhostip": {}, "gssapiauthentication": {},
 	"gssapidelegatecredentials": {}, "hostbasedauthentication": {},
 	"pubkeyauthentication": {}, "passwordauthentication": {},
+}
+
+// yesNoAskKeys accept "ask"/"confirm" in addition to yes/no, so they are not
+// validated as strict booleans (e.g. ForwardAgent yes|no|ask, AddKeysToAgent yes|no|ask|confirm).
+var yesNoAskKeys = map[string]struct{}{
+	"forwardagent": {}, "addkeystoagent": {},
 }
 
 // ValidateParamValue returns a non-nil error if val is not acceptable for the given SSH keyword.
@@ -73,6 +79,13 @@ func ValidateParamValue(key, val string) error {
 		case "yes", "no":
 		default:
 			return fmt.Errorf("%s must be yes or no", key)
+		}
+	}
+	if _, ok := yesNoAskKeys[low]; ok {
+		switch strings.ToLower(val) {
+		case "yes", "no", "ask", "confirm":
+		default:
+			return fmt.Errorf("%s must be yes, no, ask or confirm", key)
 		}
 	}
 	return nil
