@@ -92,7 +92,7 @@ func backup(path string) error {
 	if err != nil {
 		return err
 	}
-	backupDir := filepath.Join(home, ".ssh-vault", "backups", "config")
+	backupDir := filepath.Join(home, ".keyward", "backups", "config")
 
 	err = os.MkdirAll(backupDir, 0700)
 	if err != nil {
@@ -152,7 +152,7 @@ func Save(c *Config) error {
 		return err
 	}
 
-	backupDir := filepath.Join(home, ".ssh-vault", "backups", "config")
+	backupDir := filepath.Join(home, ".keyward", "backups", "config")
 	if err := rotateBackup(backupDir); err != nil {
 		return err
 	}

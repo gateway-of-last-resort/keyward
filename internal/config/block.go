@@ -112,6 +112,14 @@ func AddParam(b *Block, key string, value string) {
 
 }
 
+// RemoveParamAt removes the token at index idx from b.Tokens.
+func RemoveParamAt(b *Block, idx int) {
+	if idx < 0 || idx >= len(b.Tokens) {
+		return
+	}
+	b.Tokens = slices.Delete(b.Tokens, idx, idx+1)
+}
+
 // RenameHost updates the Host token value and b.Pattern to pattern.
 func RenameHost(b *Block, pattern string) {
 
@@ -128,54 +136,66 @@ func RenameHost(b *Block, pattern string) {
 // ToggleLine comments out a PARAM line or restores a COMMENT line back to PARAM.
 // Returns false if the line cannot be toggled (HOST, MATCH, EMPTY, or unparseable comment).
 func ToggleLine(b *Block, lineNum int) bool {
-
 	for i := range b.Tokens {
-
 		if b.Tokens[i].LineNum == lineNum {
-			if b.Tokens[i].Type == HOST || b.Tokens[i].Type == MATCH || b.Tokens[i].Type == EMPTY {
-				return false
-			}
-			if b.Tokens[i].Type == PARAM {
-				b.Tokens[i].Type = COMMENT
-				b.Tokens[i].Raw = "# " + b.Tokens[i].Raw
-				b.Tokens[i].Value = ""
-				b.Tokens[i].Sep = ""
-				b.Tokens[i].Key = ""
-
-				return true
-			} else {
-				original := b.Tokens[i]
-
-				raw := b.Tokens[i].Raw
-				trimmedLeft := strings.TrimLeft(raw, " \t")
-				leading := raw[:len(raw)-len(trimmedLeft)]
-
-				var content string
-				if strings.HasPrefix(trimmedLeft, "# ") {
-					content = trimmedLeft[2:]
-				} else if strings.HasPrefix(trimmedLeft, "#") {
-					content = trimmedLeft[1:]
-				} else {
-					content = trimmedLeft
-				}
-
-				stripped := leading + content
-				newToken := parseParam(stripped)
-
-				if newToken.Key == "" || !isValidSSHKeyword(newToken.Key) {
-					b.Tokens[i] = original
-					return false
-				}
-
-				b.Tokens[i].Raw = stripped
-				b.Tokens[i].Key = newToken.Key
-				b.Tokens[i].Sep = newToken.Sep
-				b.Tokens[i].Value = newToken.Value
-				b.Tokens[i].Type = PARAM
-
-				return true
-			}
+			return toggleAt(b, i)
 		}
 	}
 	return false
+}
+
+// ToggleAt toggles the token at index idx (0-based into b.Tokens).
+// Returns false if the token cannot be toggled.
+func ToggleAt(b *Block, idx int) bool {
+	if idx < 0 || idx >= len(b.Tokens) {
+		return false
+	}
+	return toggleAt(b, idx)
+}
+
+func toggleAt(b *Block, i int) bool {
+	if b.Tokens[i].Type == HOST || b.Tokens[i].Type == MATCH || b.Tokens[i].Type == EMPTY {
+		return false
+	}
+	if b.Tokens[i].Type == PARAM {
+		raw := b.Tokens[i].Raw
+		if raw == "" {
+			raw = b.Tokens[i].Key + b.Tokens[i].Sep + b.Tokens[i].Value
+		}
+		b.Tokens[i].Raw = "# " + raw
+		b.Tokens[i].Type = COMMENT
+		b.Tokens[i].Value = ""
+		b.Tokens[i].Sep = ""
+		b.Tokens[i].Key = ""
+		return true
+	}
+
+	original := b.Tokens[i]
+	raw := b.Tokens[i].Raw
+	trimmedLeft := strings.TrimLeft(raw, " \t")
+	leading := raw[:len(raw)-len(trimmedLeft)]
+
+	var content string
+	if strings.HasPrefix(trimmedLeft, "# ") {
+		content = trimmedLeft[2:]
+	} else if strings.HasPrefix(trimmedLeft, "#") {
+		content = trimmedLeft[1:]
+	} else {
+		content = trimmedLeft
+	}
+
+	stripped := leading + content
+	newToken := parseParam(stripped)
+
+	if newToken.Key == "" || !isValidSSHKeyword(newToken.Key) {
+		b.Tokens[i] = original
+		return false
+	}
+
+	b.Tokens[i].Raw = stripped
+	b.Tokens[i].Key = newToken.Key
+	b.Tokens[i].Sep = newToken.Sep
+	b.Tokens[i].Value = newToken.Value
+	b.Tokens[i].Type = PARAM
+	return true
 }
