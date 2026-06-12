@@ -101,7 +101,8 @@ func (m keyListModel) updateSearch(msg tea.KeyMsg) (keyListModel, tea.Cmd) {
 		m.cursor = 0
 	case "backspace":
 		if len(m.query) > 0 {
-			m.query = m.query[:len(m.query)-1]
+			r := []rune(m.query)
+			m.query = string(r[:len(r)-1])
 			m.cursor = 0
 		}
 	default:

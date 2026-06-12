@@ -178,9 +178,11 @@ func (m generateModel) submit() (generateModel, tea.Cmd) {
 		AllowEmptyPassphrase: m.allowEmpty,
 	}
 	if algo == keys.AlgorithmRSA {
-		raw := strings.TrimSpace(m.inputs[inComment].Value())
-		if bits, err := strconv.Atoi(raw); err == nil {
+		// For RSA the comment field doubles as the bit-size input. If it parses
+		// as a number, treat it as the bit size — not as the key comment.
+		if bits, err := strconv.Atoi(comment); err == nil {
 			opts.BitSize = bits
+			opts.Comment = ""
 		}
 	}
 
@@ -204,7 +206,7 @@ var inputLabels = [inCount]string{
 func (m generateModel) view() string {
 	var sb strings.Builder
 
-	sb.WriteString(sectionHeaderStyle.Width(m.width - 2).Render("Generate SSH Key") + "\n\n")
+	sb.WriteString(sectionHeaderStyle.Width(m.width-2).Render("Generate SSH Key") + "\n\n")
 
 	// ── Algorithm toggle ──────────────────────────────
 	algoFocused := m.focused == 0
@@ -288,4 +290,3 @@ func (m generateModel) view() string {
 
 	return sb.String()
 }
-
