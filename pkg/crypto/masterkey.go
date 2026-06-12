@@ -229,9 +229,8 @@ func ChangeMasterKeyPassword(path, oldPassword, newPassword string) error {
 		return errors.Join(err, rollbackErr)
 	}
 
-	err = os.Remove(path + ".bak")
-	if err != nil {
-		return err
-	}
+	// The new key is already written; removing the backup is best-effort.
+	// A failure here must not be reported as a password-change failure.
+	_ = os.Remove(path + ".bak")
 	return nil
 }
