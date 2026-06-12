@@ -65,7 +65,7 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error
 
 		header := &tar.Header{
 			Name:    f.tarName,
-			Mode:    int64(stat.Mode()),
+			Mode:    int64(stat.Mode().Perm()),
 			Size:    int64(len(data)),
 			ModTime: stat.ModTime(),
 		}
