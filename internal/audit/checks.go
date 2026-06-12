@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gateway-of-last-resort/ssh-vault/internal/config"
-	"github.com/gateway-of-last-resort/ssh-vault/internal/keys"
+	"github.com/gateway-of-last-resort/keyward/internal/config"
+	"github.com/gateway-of-last-resort/keyward/internal/keys"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -58,7 +58,7 @@ func checkPassphrase(key keys.Key) []AuditResult {
 					Severity: Critical,
 					Category: CategoryKey,
 					Message:  "Private key must have passphrase",
-					Fix:      "Use ssh-vault to generate a new Ed25519 key",
+					Fix:      "Use Keyward to generate a new Ed25519 key",
 				})
 			default:
 				results = append(results, AuditResult{
@@ -86,7 +86,7 @@ func checkAlgorithm(key keys.Key) []AuditResult {
 				Severity: Critical,
 				Category: CategoryKey,
 				Message:  "Algorithm is too unreliable",
-				Fix:      "Use ssh-vault to generate a new Ed25519 key", // (press 'g')
+				Fix:      "Use Keyward to generate a new Ed25519 key", // (press 'g')
 			})
 		}
 	}
@@ -109,7 +109,7 @@ func checkBitSize(key keys.Key) []AuditResult {
 				Severity: Critical,
 				Category: CategoryKey,
 				Message:  "Bit size must be at least 2048, better >=4096",
-				Fix:      "Use ssh-vault to generate a new Ed25519 key", // (press 'g')
+				Fix:      "Use Keyward to generate a new Ed25519 key", // (press 'g')
 			})
 
 		case key.BitSize == 2048:
@@ -118,7 +118,7 @@ func checkBitSize(key keys.Key) []AuditResult {
 				Severity: Warning,
 				Category: CategoryKey,
 				Message:  "Bit size should be greater than 2048",
-				Fix:      "Use ssh-vault to generate a new Ed25519 key", // (press 'g')
+				Fix:      "Use Keyward to generate a new Ed25519 key", // (press 'g')
 			})
 
 		case 2048 < key.BitSize && key.BitSize < 4096:
@@ -127,7 +127,7 @@ func checkBitSize(key keys.Key) []AuditResult {
 				Severity: Info,
 				Category: CategoryKey,
 				Message:  "Bit size should be >= 4096",
-				Fix:      "Use ssh-vault to regenerate this key with 4096 bits", // (press 'g')
+				Fix:      "Use Keyward to regenerate this key with 4096 bits", // (press 'g')
 			})
 
 		case key.BitSize >= 4096:
@@ -177,7 +177,7 @@ func checkAge(key keys.Key) []AuditResult {
 				Severity: Warning,
 				Category: CategoryKey,
 				Message:  "Key is too old",
-				Fix:      "Use ssh-vault to rotate this key", //(press 'r')
+				Fix:      "Use Keyward to rotate this key", //(press 'r')
 			})
 		}
 	}

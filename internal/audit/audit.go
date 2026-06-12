@@ -3,8 +3,8 @@ package audit
 import (
 	"time"
 
-	"github.com/gateway-of-last-resort/ssh-vault/internal/config"
-	"github.com/gateway-of-last-resort/ssh-vault/internal/keys"
+	"github.com/gateway-of-last-resort/keyward/internal/config"
+	"github.com/gateway-of-last-resort/keyward/internal/keys"
 )
 
 func calcReport(results []AuditResult) (points int, grade Grade, critical, warning, info int) {
@@ -73,8 +73,10 @@ func Run(allKeys []keys.Key, cfg *config.Config, sshDir string) AuditReport {
 		}
 	}
 
-	for _, check := range configChecks {
-		allResults = append(allResults, check(cfg)...)
+	if cfg != nil {
+		for _, check := range configChecks {
+			allResults = append(allResults, check(cfg)...)
+		}
 	}
 
 	for _, check := range systemChecks {

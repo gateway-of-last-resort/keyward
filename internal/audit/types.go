@@ -3,8 +3,8 @@ package audit
 import (
 	"time"
 
-	"github.com/gateway-of-last-resort/ssh-vault/internal/config"
-	"github.com/gateway-of-last-resort/ssh-vault/internal/keys"
+	"github.com/gateway-of-last-resort/keyward/internal/config"
+	"github.com/gateway-of-last-resort/keyward/internal/keys"
 )
 
 // Severity indicates the risk level of an audit finding.

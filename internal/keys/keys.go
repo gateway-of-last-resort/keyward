@@ -56,6 +56,10 @@ func Parse(path string) ([]Key, error) {
 		}
 		filename := entry.Name()
 
+		if strings.HasSuffix(filename, ".bak") {
+			continue
+		}
+
 		baseName := strings.TrimSuffix(filename, ".pub")
 
 		if pairs[baseName] == nil {
