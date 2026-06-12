@@ -43,6 +43,9 @@ type configModel struct {
 	addParamInputs [2]textinput.Model
 	addParamErr    string
 
+	confirmDeleteBlock bool
+	confirmDeleteParam bool
+
 	saved   bool
 	saveErr error
 	saveMsg string
@@ -130,6 +133,10 @@ func (m configModel) hints() string {
 		return "enter  confirm  ·  esc  cancel"
 	case m.addingParam:
 		return "tab  switch fields  ·  enter  confirm  ·  esc  cancel"
+	case m.confirmDeleteBlock:
+		return "d  confirm delete host  ·  esc  cancel"
+	case m.confirmDeleteParam:
+		return "d  confirm delete param  ·  esc  cancel"
 	case m.paneRight:
 		return "↑/↓  navigate  ·  a  add  ·  e  edit  ·  t  toggle  ·  d  delete  ·  esc  back  ·  s  save  ·  " + nav
 	default:
@@ -169,34 +176,44 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 		m.saveMsg = ""
 		switch msg.String() {
 		case "esc":
-			if m.paneRight {
+			if m.confirmDeleteBlock || m.confirmDeleteParam {
+				m.confirmDeleteBlock = false
+				m.confirmDeleteParam = false
+			} else if m.paneRight {
 				m.paneRight = false
 			} else {
 				return m, navigate(ScreenKeys)
 			}
 		case "enter":
 			if !m.paneRight && len(m.cfg.Blocks) > 0 {
+				m.confirmDeleteBlock = false
 				m.paneRight = true
 				m.paramCursor = 0
 			}
 		case "up", "k":
 			if m.paneRight {
+				m.confirmDeleteParam = false
 				m = m.moveParam(-1)
 			} else {
+				m.confirmDeleteBlock = false
 				m = m.moveBlock(-1)
 			}
 		case "down", "j":
 			if m.paneRight {
+				m.confirmDeleteParam = false
 				m = m.moveParam(1)
 			} else {
+				m.confirmDeleteBlock = false
 				m = m.moveBlock(1)
 			}
 		case "a":
 			if !m.paneRight {
+				m.confirmDeleteBlock = false
 				m.addBlockInput.SetValue("")
 				m.addBlockInput.Focus()
 				m.addingBlock = true
 			} else if m.blockCursor < len(m.cfg.Blocks) {
+				m.confirmDeleteParam = false
 				m.addParamInputs[0].SetValue("")
 				m.addParamInputs[1].SetValue("")
 				m.addParamInputs[0].Focus()
@@ -206,12 +223,14 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 			}
 		case "r":
 			if !m.paneRight && len(m.cfg.Blocks) > 0 {
+				m.confirmDeleteBlock = false
 				m.renameInput.SetValue(m.cfg.Blocks[m.blockCursor].Pattern)
 				m.renameInput.Focus()
 				m.renamingBlock = true
 			}
 		case "e":
 			if m.paneRight && m.blockCursor < len(m.cfg.Blocks) {
+				m.confirmDeleteParam = false
 				blk := &m.cfg.Blocks[m.blockCursor]
 				tok := m.currentToken(blk)
 				if tok != nil && tok.Type == config.PARAM {
@@ -231,20 +250,30 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 		case "d":
 			if !m.paneRight {
 				if len(m.cfg.Blocks) > 0 {
-					pattern := m.cfg.Blocks[m.blockCursor].Pattern
-					config.RemoveBlock(m.cfg, pattern) // also sets Modified
-					if m.blockCursor >= len(m.cfg.Blocks) && m.blockCursor > 0 {
-						m.blockCursor--
+					if !m.confirmDeleteBlock {
+						m.confirmDeleteBlock = true
+					} else {
+						m.confirmDeleteBlock = false
+						pattern := m.cfg.Blocks[m.blockCursor].Pattern
+						config.RemoveBlock(m.cfg, pattern)
+						if m.blockCursor >= len(m.cfg.Blocks) && m.blockCursor > 0 {
+							m.blockCursor--
+						}
+						m.paramCursor = 0
 					}
-					m.paramCursor = 0
 				}
 			} else if m.blockCursor < len(m.cfg.Blocks) {
-				blk := &m.cfg.Blocks[m.blockCursor]
-				if idx := paramTokenIdx(blk, m.paramCursor); idx >= 0 {
-					config.RemoveParamAt(blk, idx)
-					m.cfg.Modified = true
-					if m.paramCursor >= len(paramTokens(*blk)) && m.paramCursor > 0 {
-						m.paramCursor--
+				if !m.confirmDeleteParam {
+					m.confirmDeleteParam = true
+				} else {
+					m.confirmDeleteParam = false
+					blk := &m.cfg.Blocks[m.blockCursor]
+					if idx := paramTokenIdx(blk, m.paramCursor); idx >= 0 {
+						config.RemoveParamAt(blk, idx)
+						m.cfg.Modified = true
+						if m.paramCursor >= len(paramTokens(*blk)) && m.paramCursor > 0 {
+							m.paramCursor--
+						}
 					}
 				}
 			}
@@ -526,7 +555,12 @@ func (m configModel) view() string {
 		sb.WriteString(l + sep + r + "\n")
 	}
 
-	if m.saveMsg != "" {
+	switch {
+	case m.confirmDeleteBlock:
+		sb.WriteString("\n" + warnMsgStyle.Render("  delete host? press d again to confirm · esc to cancel") + "\n")
+	case m.confirmDeleteParam:
+		sb.WriteString("\n" + warnMsgStyle.Render("  delete param? press d again to confirm · esc to cancel") + "\n")
+	case m.saveMsg != "":
 		if m.saveErr != nil {
 			sb.WriteString("\n" + formErrorStyle.Render("  "+m.saveMsg) + "\n")
 		} else {

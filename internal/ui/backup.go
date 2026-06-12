@@ -32,8 +32,9 @@ type backupModel struct {
 	statusMsg string
 	isError   bool
 
-	backups []string // list of existing backup files
-	cursor  int      // selected backup index
+	backups       []string // list of existing backup files
+	cursor        int      // selected backup index
+	confirmDelete bool
 }
 
 type backupStep int
@@ -89,10 +90,12 @@ func (m backupModel) updateIdle(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		if len(m.backups) > 0 {
+			m.confirmDelete = false
 			m.cursor = (m.cursor - 1 + len(m.backups)) % len(m.backups)
 		}
 	case "down", "j":
 		if len(m.backups) > 0 {
+			m.confirmDelete = false
 			m.cursor = (m.cursor + 1) % len(m.backups)
 		}
 	case "b":
@@ -114,20 +117,29 @@ func (m backupModel) updateIdle(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 		m.confirmInput.Focus()
 	case "d":
 		if len(m.backups) > 0 {
-			if err := os.Remove(m.backups[m.cursor]); err != nil {
-				m.statusMsg = "delete failed: " + err.Error()
-				m.isError = true
+			if !m.confirmDelete {
+				m.confirmDelete = true
 			} else {
-				m.backups = listBackups(m.vaultDir)
-				if m.cursor >= len(m.backups) && m.cursor > 0 {
-					m.cursor--
+				m.confirmDelete = false
+				if err := os.Remove(m.backups[m.cursor]); err != nil {
+					m.statusMsg = "delete failed: " + err.Error()
+					m.isError = true
+				} else {
+					m.backups = listBackups(m.vaultDir)
+					if m.cursor >= len(m.backups) && m.cursor > 0 {
+						m.cursor--
+					}
+					m.statusMsg = "backup deleted"
+					m.isError = false
 				}
-				m.statusMsg = "backup deleted"
-				m.isError = false
 			}
 		}
 	case "esc", "q":
-		return m, navigate(ScreenKeys)
+		if m.confirmDelete {
+			m.confirmDelete = false
+		} else {
+			return m, navigate(ScreenKeys)
+		}
 	}
 	return m, nil
 }
@@ -284,7 +296,11 @@ func (m backupModel) view() string {
 
 	switch m.promptStep {
 	case stepIdle:
-		sb.WriteString(dimStyle.Render("  b  create backup  ·  r  restore  ·  d  delete selected"))
+		if m.confirmDelete {
+			sb.WriteString(warnMsgStyle.Render("  delete backup? press d again to confirm · esc to cancel"))
+		} else {
+			sb.WriteString(dimStyle.Render("  b  create backup  ·  r  restore  ·  d  delete selected"))
+		}
 		sb.WriteString("\n")
 	case stepPasswd:
 		sb.WriteString(labelStyle.Render("Password") + "  " + m.passwordInput.View() + "\n")
