@@ -1,0 +1,553 @@
+package storage_test
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+
+	"filippo.io/age"
+	"github.com/gateway-of-last-resort/keyward/internal/storage"
+)
+
+// newIdentity generates a fresh X25519 identity for test use.
+func newIdentity(t *testing.T) *age.X25519Identity {
+	t.Helper()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("generate identity: %v", err)
+	}
+	return id
+}
+
+// testMeta returns a KeyMetadata with the given fingerprint and populated fields.
+func testMeta(fingerprint string) storage.KeyMetadata {
+	return storage.KeyMetadata{
+		Fingerprint: fingerprint,
+		Tags:        []string{"test"},
+		Note:        "note for " + fingerprint,
+		LinkedHosts: []string{"host1"},
+	}
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+func TestInit_CreatesDirs(t *testing.T) {
+	vaultDir := filepath.Join(t.TempDir(), ".keyward")
+
+	if err := storage.Init(vaultDir); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	for _, sub := range []string{".", "backups", filepath.Join("backups", "config")} {
+		p := filepath.Join(vaultDir, sub)
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Errorf("dir %q not created: %v", p, err)
+			continue
+		}
+		if !info.IsDir() {
+			t.Errorf("%q is not a directory", p)
+		}
+	}
+}
+
+func TestInit_DirPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod semantics differ on Windows")
+	}
+
+	vaultDir := filepath.Join(t.TempDir(), ".keyward")
+	if err := storage.Init(vaultDir); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	info, err := os.Stat(vaultDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0700 {
+		t.Errorf("vaultDir perms = %04o, want 0700", info.Mode().Perm())
+	}
+}
+
+// ── Save / Load ───────────────────────────────────────────────────────────────
+
+func TestSaveLoad_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	id := newIdentity(t)
+
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	for _, fp := range []string{"SHA256:aaaa", "SHA256:bbbb"} {
+		if err := storage.Put(s, testMeta(fp)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := storage.Save(s, dir, id); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := storage.Load(dir, id)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	for _, fp := range []string{"SHA256:aaaa", "SHA256:bbbb"} {
+		got, err := storage.Get(loaded, fp)
+		if err != nil {
+			t.Errorf("Get(%q) after Load: %v", fp, err)
+			continue
+		}
+		want := testMeta(fp)
+		if got.Note != want.Note {
+			t.Errorf("Note = %q, want %q", got.Note, want.Note)
+		}
+	}
+}
+
+func TestSave_UpdatesSavedAt(t *testing.T) {
+	dir := t.TempDir()
+	id := newIdentity(t)
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+
+	before := time.Now().Truncate(time.Second)
+	if err := storage.Save(s, dir, id); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	after := time.Now().Add(time.Second)
+
+	if s.SavedAt.IsZero() {
+		t.Fatal("SavedAt not set on caller Store after Save")
+	}
+	if s.SavedAt.Before(before) || s.SavedAt.After(after) {
+		t.Errorf("SavedAt = %v out of expected range [%v, %v]", s.SavedAt, before, after)
+	}
+}
+
+func TestSave_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod semantics differ on Windows")
+	}
+
+	dir := t.TempDir()
+	id := newIdentity(t)
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+
+	if err := storage.Save(s, dir, id); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(dir, "metadata.age"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("metadata.age perms = %04o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestLoad_Empty(t *testing.T) {
+	dir := t.TempDir()
+	id := newIdentity(t)
+
+	s, err := storage.Load(dir, id)
+	if err != nil {
+		t.Fatalf("Load on empty dir: %v", err)
+	}
+	if len(s.Keys) != 0 {
+		t.Errorf("want empty store, got %d keys", len(s.Keys))
+	}
+}
+
+func TestLoad_WrongIdentity(t *testing.T) {
+	dir := t.TempDir()
+	id1 := newIdentity(t)
+	id2 := newIdentity(t)
+
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Save(s, dir, id1); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := storage.Load(dir, id2); err == nil {
+		t.Fatal("Load with wrong identity: expected error, got nil")
+	}
+}
+
+// TestLoad_BakRecovery simulates a crash where metadata.age was renamed to .bak
+// but the new file was not yet written. Load must recover from .bak.
+func TestLoad_BakRecovery(t *testing.T) {
+	dir := t.TempDir()
+	id := newIdentity(t)
+
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:bak1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Save(s, dir, id); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	metaPath := filepath.Join(dir, "metadata.age")
+	if err := os.Rename(metaPath, metaPath+".bak"); err != nil {
+		t.Fatalf("simulate crash rename: %v", err)
+	}
+
+	loaded, err := storage.Load(dir, id)
+	if err != nil {
+		t.Fatalf("Load after bak recovery: %v", err)
+	}
+	if _, err := storage.Get(loaded, "SHA256:bak1"); err != nil {
+		t.Error("key not recovered from .bak file")
+	}
+}
+
+// ── Get ───────────────────────────────────────────────────────────────────────
+
+func TestGet(t *testing.T) {
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:get1")); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name        string
+		fingerprint string
+		wantErr     error
+	}{
+		{"found", "SHA256:get1", nil},
+		{"not_found", "SHA256:missing", storage.ErrNotFound},
+		{"empty_fingerprint", "", storage.ErrInvalidFingerprint},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := storage.Get(*s, tc.fingerprint)
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil && got.Fingerprint != tc.fingerprint {
+				t.Errorf("Fingerprint = %q, want %q", got.Fingerprint, tc.fingerprint)
+			}
+		})
+	}
+}
+
+// ── Put ───────────────────────────────────────────────────────────────────────
+
+func TestPut_StoresMetadata(t *testing.T) {
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	meta := testMeta("SHA256:put1")
+
+	if err := storage.Put(s, meta); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	got, err := storage.Get(*s, "SHA256:put1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Note != meta.Note {
+		t.Errorf("Note = %q, want %q", got.Note, meta.Note)
+	}
+}
+
+func TestPut_Duplicate(t *testing.T) {
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:dup")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := storage.Put(s, testMeta("SHA256:dup"))
+	if !errors.Is(err, storage.ErrAlreadyExists) {
+		t.Errorf("err = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestPut_EmptyFingerprint(t *testing.T) {
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	err := storage.Put(s, storage.KeyMetadata{Fingerprint: ""})
+	if !errors.Is(err, storage.ErrInvalidFingerprint) {
+		t.Errorf("err = %v, want ErrInvalidFingerprint", err)
+	}
+}
+
+func TestPut_InitializesNilSlices(t *testing.T) {
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, storage.KeyMetadata{Fingerprint: "SHA256:nilslice"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := storage.Get(*s, "SHA256:nilslice")
+	if got.Tags == nil {
+		t.Error("Tags should be initialised to empty slice, not nil")
+	}
+	if got.LinkedHosts == nil {
+		t.Error("LinkedHosts should be initialised to empty slice, not nil")
+	}
+}
+
+// ── Update ────────────────────────────────────────────────────────────────────
+
+func TestUpdate_ModifiesMetadata(t *testing.T) {
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:upd1")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := storage.Update(s, "SHA256:upd1", func(m *storage.KeyMetadata) {
+		m.Note = "updated"
+		m.Tags = []string{"prod", "infra"}
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := storage.Get(*s, "SHA256:upd1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Note != "updated" {
+		t.Errorf("Note = %q, want updated", got.Note)
+	}
+	if len(got.Tags) != 2 || got.Tags[0] != "prod" {
+		t.Errorf("Tags = %v, want [prod infra]", got.Tags)
+	}
+}
+
+func TestUpdate_Errors(t *testing.T) {
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	noop := func(m *storage.KeyMetadata) {}
+
+	cases := []struct {
+		name        string
+		fingerprint string
+		wantErr     error
+	}{
+		{"not_found", "SHA256:missing", storage.ErrNotFound},
+		{"empty_fingerprint", "", storage.ErrInvalidFingerprint},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := storage.Update(s, tc.fingerprint, noop)
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+
+func TestDelete_RemovesKey(t *testing.T) {
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:del1")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := storage.Delete(s, "SHA256:del1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	_, err := storage.Get(*s, "SHA256:del1")
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound after Delete", err)
+	}
+}
+
+func TestDelete_Errors(t *testing.T) {
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+
+	cases := []struct {
+		name        string
+		fingerprint string
+		wantErr     error
+	}{
+		{"not_found", "SHA256:missing", storage.ErrNotFound},
+		{"empty_fingerprint", "", storage.ErrInvalidFingerprint},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := storage.Delete(s, tc.fingerprint)
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// ── List ──────────────────────────────────────────────────────────────────────
+
+func TestList_SortedByFingerprint(t *testing.T) {
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	for _, fp := range []string{"SHA256:zzz", "SHA256:aaa", "SHA256:mmm"} {
+		if err := storage.Put(s, testMeta(fp)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	list := storage.List(*s)
+	if len(list) != 3 {
+		t.Fatalf("want 3 keys, got %d", len(list))
+	}
+
+	want := []string{"SHA256:aaa", "SHA256:mmm", "SHA256:zzz"}
+	for i, m := range list {
+		if m.Fingerprint != want[i] {
+			t.Errorf("List[%d] = %q, want %q", i, m.Fingerprint, want[i])
+		}
+	}
+}
+
+func TestList_Empty(t *testing.T) {
+	s := storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if list := storage.List(s); len(list) != 0 {
+		t.Errorf("want empty list, got %d items", len(list))
+	}
+}
+
+// ── CreateBackup / RestoreBackup ──────────────────────────────────────────────
+
+func TestCreateRestoreBackup_RoundTrip(t *testing.T) {
+	sshDir := t.TempDir()
+	vaultDir := t.TempDir()
+	restoreSSH := t.TempDir()
+	restoreVault := t.TempDir()
+	id := newIdentity(t)
+
+	keyData := []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nZmFrZWtleQ==\n-----END OPENSSH PRIVATE KEY-----\n")
+	if err := os.WriteFile(filepath.Join(sshDir, "id_ed25519"), keyData, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:backup1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Save(s, vaultDir, id); err != nil {
+		t.Fatalf("Save before backup: %v", err)
+	}
+
+	backupPath, err := storage.CreateBackup(sshDir, vaultDir, id)
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("backup file not created: %v", err)
+	}
+
+	if err := storage.RestoreBackup(backupPath, restoreSSH, restoreVault, id); err != nil {
+		t.Fatalf("RestoreBackup: %v", err)
+	}
+
+	// SSH file content preserved
+	restoredKey, err := os.ReadFile(filepath.Join(restoreSSH, "id_ed25519"))
+	if err != nil {
+		t.Fatalf("restored key file missing: %v", err)
+	}
+	if !bytes.Equal(restoredKey, keyData) {
+		t.Error("restored key content differs from original")
+	}
+
+	// Metadata restored and loadable
+	s2, err := storage.Load(restoreVault, id)
+	if err != nil {
+		t.Fatalf("Load after restore: %v", err)
+	}
+	got, err := storage.Get(s2, "SHA256:backup1")
+	if err != nil {
+		t.Fatalf("Get after restore: %v", err)
+	}
+	if got.Note != testMeta("SHA256:backup1").Note {
+		t.Errorf("restored Note = %q, want %q", got.Note, testMeta("SHA256:backup1").Note)
+	}
+}
+
+func TestCreateBackup_SkipsKnownHostsAndAuthorizedKeys(t *testing.T) {
+	sshDir := t.TempDir()
+	vaultDir := t.TempDir()
+	restoreSSH := t.TempDir()
+	restoreVault := t.TempDir()
+	id := newIdentity(t)
+
+	os.WriteFile(filepath.Join(sshDir, "known_hosts"), []byte("host data"), 0644)
+	os.WriteFile(filepath.Join(sshDir, "authorized_keys"), []byte("auth data"), 0644)
+	os.WriteFile(filepath.Join(sshDir, "id_ed25519"), []byte("key data"), 0600)
+
+	backupPath, err := storage.CreateBackup(sshDir, vaultDir, id)
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+
+	if err := storage.RestoreBackup(backupPath, restoreSSH, restoreVault, id); err != nil {
+		t.Fatalf("RestoreBackup: %v", err)
+	}
+
+	for _, skip := range []string{"known_hosts", "authorized_keys"} {
+		if _, err := os.Stat(filepath.Join(restoreSSH, skip)); !os.IsNotExist(err) {
+			t.Errorf("%q should not be present after restore", skip)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(restoreSSH, "id_ed25519")); err != nil {
+		t.Errorf("id_ed25519 missing from restored backup: %v", err)
+	}
+}
+
+func TestCreateBackup_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod semantics differ on Windows")
+	}
+
+	sshDir := t.TempDir()
+	vaultDir := t.TempDir()
+	id := newIdentity(t)
+
+	backupPath, err := storage.CreateBackup(sshDir, vaultDir, id)
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("backup perms = %04o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestCreateBackup_InvalidSSHDir(t *testing.T) {
+	id := newIdentity(t)
+	_, err := storage.CreateBackup("/nonexistent/ssh", t.TempDir(), id)
+	if !errors.Is(err, storage.ErrBackupFailed) {
+		t.Errorf("err = %v, want ErrBackupFailed", err)
+	}
+}
+
+func TestRestoreBackup_NotFound(t *testing.T) {
+	id := newIdentity(t)
+	err := storage.RestoreBackup("/nonexistent/backup.tar.age", t.TempDir(), t.TempDir(), id)
+	if !errors.Is(err, storage.ErrBackupNotFound) {
+		t.Errorf("err = %v, want ErrBackupNotFound", err)
+	}
+}
+
+func TestRestoreBackup_WrongIdentity(t *testing.T) {
+	sshDir := t.TempDir()
+	vaultDir := t.TempDir()
+	id1 := newIdentity(t)
+	id2 := newIdentity(t)
+
+	backupPath, err := storage.CreateBackup(sshDir, vaultDir, id1)
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+
+	err = storage.RestoreBackup(backupPath, t.TempDir(), t.TempDir(), id2)
+	if !errors.Is(err, storage.ErrRestoreFailed) {
+		t.Errorf("err = %v, want ErrRestoreFailed", err)
+	}
+}
