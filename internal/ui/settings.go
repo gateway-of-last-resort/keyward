@@ -52,6 +52,18 @@ type settingsSSHDirChangedMsg struct{ sshDir string }
 
 var settingsOKStyle = lipgloss.NewStyle().Foreground(colGreen)
 
+func (m settingsModel) hints() string {
+	nav := "tab / shift+tab  switch screens"
+	switch m.step {
+	case settingsChangePass:
+		return "tab / enter  next field  ·  enter on last to save  ·  esc  cancel"
+	case settingsEditSSHDir:
+		return "enter  save  ·  esc  cancel"
+	default:
+		return "↑/↓  navigate  ·  enter  select  ·  " + nav
+	}
+}
+
 func newSettingsModel(masterKeyPath, sshDir, vaultDir string) settingsModel {
 	old := textinput.New()
 	old.Placeholder = "current password"
@@ -310,8 +322,6 @@ func (m settingsModel) viewMenu() string {
 	sb.WriteString("\n")
 	sb.WriteString(dimStyle.Render("  vault dir  "))
 	sb.WriteString(dimStyle.Render(m.vaultDir))
-	sb.WriteString("\n\n")
-	sb.WriteString(dimStyle.Render("  ↑/↓  navigate  ·  enter  select"))
 	sb.WriteString("\n")
 	return sb.String()
 }
@@ -337,9 +347,6 @@ func (m settingsModel) viewChangePass() string {
 		sb.WriteString(formErrorStyle.Render("✗  " + m.formErr.Error()))
 		sb.WriteString("\n")
 	}
-	sb.WriteString("\n  ")
-	sb.WriteString(dimStyle.Render("tab / enter  next field  ·  enter on confirm to save  ·  esc cancel"))
-	sb.WriteString("\n")
 	return sb.String()
 }
 
@@ -356,8 +363,5 @@ func (m settingsModel) viewEditSSHDir() string {
 		sb.WriteString(formErrorStyle.Render("✗  " + m.formErr.Error()))
 		sb.WriteString("\n")
 	}
-	sb.WriteString("\n  ")
-	sb.WriteString(dimStyle.Render("enter  save  ·  esc cancel"))
-	sb.WriteString("\n")
 	return sb.String()
 }

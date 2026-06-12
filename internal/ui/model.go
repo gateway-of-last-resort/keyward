@@ -579,8 +579,13 @@ func (m Model) statusBar() string {
 	if m.err != nil {
 		return sep + "\n" + errorBarStyle.Render("✗  "+m.err.Error())
 	}
-	if m.active == ScreenConfig {
+	switch m.active {
+	case ScreenConfig:
 		return sep + "\n" + statusBarStyle.Render(m.cfgEditor.hints())
+	case ScreenBackup:
+		return sep + "\n" + statusBarStyle.Render(m.backupView.hints())
+	case ScreenSettings:
+		return sep + "\n" + statusBarStyle.Render(m.settingsView.hints())
 	}
 	return sep + "\n" + statusBarStyle.Render(screenHint(m.active))
 }

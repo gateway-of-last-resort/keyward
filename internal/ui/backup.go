@@ -48,6 +48,21 @@ const (
 
 var backupMsgStyle = lipgloss.NewStyle().Foreground(colGreen)
 
+func (m backupModel) hints() string {
+	nav := "tab / shift+tab  switch screens"
+	switch m.promptStep {
+	case stepPasswd:
+		return "enter  confirm  ·  esc  cancel"
+	case stepRestore:
+		return "enter  restore  ·  esc  cancel"
+	default:
+		if m.confirmDelete {
+			return "d  confirm delete  ·  esc  cancel"
+		}
+		return "↑/↓  navigate  ·  b  backup  ·  r  restore  ·  d  delete  ·  esc  back  ·  " + nav
+	}
+}
+
 func newBackupModel(sshDir, vaultDir string, identity age.Identity) backupModel {
 	pi := textinput.New()
 	pi.Placeholder = "vault password"
@@ -298,16 +313,12 @@ func (m backupModel) view() string {
 	case stepIdle:
 		if m.confirmDelete {
 			sb.WriteString(warnMsgStyle.Render("  delete backup? press d again to confirm · esc to cancel"))
-		} else {
-			sb.WriteString(dimStyle.Render("  b  create backup  ·  r  restore  ·  d  delete selected"))
+			sb.WriteString("\n")
 		}
-		sb.WriteString("\n")
 	case stepPasswd:
 		sb.WriteString(labelStyle.Render("Password") + "  " + m.passwordInput.View() + "\n")
-		sb.WriteString(dimStyle.Render("  enter to confirm · esc cancel") + "\n")
 	case stepRestore:
 		sb.WriteString(labelStyle.Render("Restore #") + "  " + m.confirmInput.View() + "\n")
-		sb.WriteString(dimStyle.Render("  enter number · esc cancel") + "\n")
 	}
 
 	if m.statusMsg != "" {
