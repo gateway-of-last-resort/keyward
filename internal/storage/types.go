@@ -21,7 +21,7 @@ type Store struct {
 }
 
 const (
-	defaultDir   = ".ssh-vault"
+	defaultDir   = ".keyward"
 	metadataFile = "metadata.age"
 	backupDir    = "backups"
 )

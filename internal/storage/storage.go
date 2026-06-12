@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/gateway-of-last-resort/ssh-vault/pkg/crypto"
+	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
 // Init creates the vault directory structure under dir with 0700 permissions.

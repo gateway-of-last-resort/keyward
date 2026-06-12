@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/gateway-of-last-resort/ssh-vault/pkg/crypto"
+	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
 func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error) {
@@ -126,7 +126,30 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error
 		return "", ErrBackupFailed
 	}
 
+	pruneBackups(backupPath, maxBackups)
+
 	return finalPath, nil
+}
+
+const maxBackups = 5
+
+// pruneBackups removes the oldest .tar.age files in dir, keeping at most max.
+func pruneBackups(dir string, max int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".tar.age") {
+			files = append(files, filepath.Join(dir, e.Name()))
+		}
+	}
+	// entries are sorted by name (timestamp prefix), so oldest are first
+	for len(files) > max {
+		os.Remove(files[0])
+		files = files[1:]
+	}
 }
 
 func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) error {
