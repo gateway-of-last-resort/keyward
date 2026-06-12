@@ -360,8 +360,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case backupResultMsg:
-		// forward to backupView so it can update its status
 		m.backupView, _ = m.backupView.update(msg)
+		if msg.err == nil && msg.restored {
+			return m, m.reloadKeys()
+		}
 		return m, nil
 	}
 

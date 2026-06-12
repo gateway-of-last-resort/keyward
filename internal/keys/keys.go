@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,8 +37,7 @@ type keyPairs struct {
 	publicPath  string
 }
 
-// Parse scans path for SSH key pairs and returns all recognised keys.
-// Returned order is non-deterministic; sorting is delegated to the caller.
+// Parse scans path for SSH key pairs and returns all recognised keys sorted by PrivateKeyPath.
 func Parse(path string) ([]Key, error) {
 
 	entries, err := os.ReadDir(path)
@@ -153,10 +153,28 @@ func Parse(path string) ([]Key, error) {
 		if parsedPublicKey != nil {
 			temp.Algorithm = parsedPublicKey.Type()
 			temp.Fingerprint = ssh.FingerprintSHA256(parsedPublicKey)
+			// For passphrase-protected keys, BitSize was not set from the private key.
+			// Extract it from the public key instead.
+			if temp.BitSize == 0 {
+				if cp, ok := parsedPublicKey.(ssh.CryptoPublicKey); ok {
+					switch pub := cp.CryptoPublicKey().(type) {
+					case *rsa.PublicKey:
+						temp.BitSize = pub.N.BitLen()
+					case *ecdsa.PublicKey:
+						temp.BitSize = pub.Curve.Params().BitSize
+					case ed25519.PublicKey:
+						temp.BitSize = 256
+					}
+				}
+			}
 		}
 		listOfKeys = append(listOfKeys, temp)
 
 	}
+
+	sort.Slice(listOfKeys, func(i, j int) bool {
+		return listOfKeys[i].PrivateKeyPath < listOfKeys[j].PrivateKeyPath
+	})
 
 	return listOfKeys, nil
 }

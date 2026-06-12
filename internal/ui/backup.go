@@ -228,7 +228,7 @@ func (m backupModel) runBackupDirect(restoreFile string) tea.Cmd {
 		if err := storage.RestoreBackup(restoreFile, sshDir, vaultDir, identity); err != nil {
 			return backupResultMsg{err: fmt.Errorf("restore failed: %w", err)}
 		}
-		return backupResultMsg{msg: "restored from " + filepath.Base(restoreFile)}
+		return backupResultMsg{msg: "restored from " + filepath.Base(restoreFile), restored: true}
 	}
 }
 
@@ -257,7 +257,7 @@ func (m backupModel) runBackup(password string) tea.Cmd {
 			if err := storage.RestoreBackup(backupFile, m.sshDir, m.vaultDir, identity); err != nil {
 				return backupResultMsg{err: fmt.Errorf("restore failed: %w", err)}
 			}
-			return backupResultMsg{msg: "restored from " + filepath.Base(backupFile)}
+			return backupResultMsg{msg: "restored from " + filepath.Base(backupFile), restored: true}
 		}
 
 		path, err := storage.CreateBackup(m.sshDir, m.vaultDir, identity)
@@ -269,8 +269,9 @@ func (m backupModel) runBackup(password string) tea.Cmd {
 }
 
 type backupResultMsg struct {
-	msg string
-	err error
+	msg      string
+	err      error
+	restored bool
 }
 
 // Wire backupResultMsg into the model's Update.
