@@ -43,10 +43,10 @@ func RotateKey(key Key, opts GenerateOptions) (newKey Key, bakPath string, err e
 
 	newKey, genErr := GenerateKeys(dir, opts)
 	if genErr != nil {
-		rollbackErr := errors.Join(
-			os.Rename(privBak, key.PrivateKeyPath),
-			os.Rename(pubBak, key.PublicKeyPath),
-		)
+		rollbackErr := os.Rename(privBak, key.PrivateKeyPath)
+		if key.PublicKeyPath != "" {
+			rollbackErr = errors.Join(rollbackErr, os.Rename(pubBak, key.PublicKeyPath))
+		}
 		return Key{}, "", errors.Join(ErrRotateFailed, genErr, rollbackErr)
 	}
 
