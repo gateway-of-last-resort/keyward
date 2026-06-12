@@ -23,9 +23,9 @@ var (
 	ErrEmptyPassphrase  = errors.New("empty passphrase")
 	ErrBitSizeTooSmall  = errors.New("bit size must be at least 2048")
 	ErrKeyAlreadyExists = errors.New("key already exists")
-	ErrWriteFailed        = errors.New("failed to write key file")
-	ErrCreateFailed       = errors.New("failed to create key file")
-	ErrEncodePrivateKey   = errors.New("failed to encode private key")
+	ErrWriteFailed      = errors.New("failed to write key file")
+	ErrCreateFailed     = errors.New("failed to create key file")
+	ErrEncodePrivateKey = errors.New("failed to encode private key")
 )
 
 // Algorithm is the SSH key algorithm used for generation.

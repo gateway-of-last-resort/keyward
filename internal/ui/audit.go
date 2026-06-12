@@ -59,7 +59,7 @@ func (m auditModel) view() string {
 	r := m.report
 	var sb strings.Builder
 
-	sb.WriteString(sectionHeaderStyle.Width(m.width - 2).Render("Security Audit") + "\n\n")
+	sb.WriteString(sectionHeaderStyle.Width(m.width-2).Render("Security Audit") + "\n\n")
 
 	// ── Grade + score bar ──────────────────────────────────────────────────────
 	gradeStyle := lipgloss.NewStyle().
