@@ -29,6 +29,11 @@ go.work.sum
 
 .DS_Store
 *.md
+!README.md
+!SECURITY.md
+!CHANGELOG.md
+# GoReleaser build output
+dist/
 
 # Editor/IDE
 .idea/
