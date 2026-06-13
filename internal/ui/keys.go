@@ -87,6 +87,11 @@ func (m keyListModel) updateNav(msg tea.KeyMsg) (keyListModel, tea.Cmd) {
 		m.cursor = 0
 	case "q":
 		return m, tea.Quit
+	case "esc":
+		if m.query != "" {
+			m.query = ""
+			m.cursor = 0
+		}
 	}
 	return m, nil
 }
