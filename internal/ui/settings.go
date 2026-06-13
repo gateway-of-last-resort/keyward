@@ -60,7 +60,7 @@ func (m settingsModel) hints() string {
 	case settingsEditSSHDir:
 		return "enter  save  ·  esc  cancel"
 	default:
-		return "↑/↓  navigate  ·  enter  select  ·  " + nav
+		return "↑/↓  navigate  ·  enter  select  ·  esc  back  ·  " + nav
 	}
 }
 
@@ -135,6 +135,8 @@ func (m settingsModel) update(msg tea.Msg) (settingsModel, tea.Cmd) {
 
 func (m settingsModel) updateMenu(msg tea.KeyMsg) (settingsModel, tea.Cmd) {
 	switch msg.String() {
+	case "esc":
+		return m, navigate(ScreenKeys)
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
@@ -319,9 +321,19 @@ func (m settingsModel) viewMenu() string {
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("\n")
+	sb.WriteString("\n\n")
 	sb.WriteString(dimStyle.Render("  vault dir  "))
 	sb.WriteString(dimStyle.Render(m.vaultDir))
+	sb.WriteString("\n\n\n\n\n")
+
+	const version = "v0.1.0"
+	const repo = "github.com/gateway-of-last-resort"
+	footer := version + "  ·  " + repo
+	pad := (m.width - len(footer)) / 2
+	if pad < 0 {
+		pad = 0
+	}
+	sb.WriteString(dimStyle.Render(strings.Repeat(" ", pad) + footer))
 	sb.WriteString("\n")
 	return sb.String()
 }

@@ -217,7 +217,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Tab / Shift+Tab cycle tabs globally, but not on auth or detail screens,
 		// and not when a config editor input is active (Tab switches key↔value fields there).
 		cfgBusy := m.active == ScreenConfig && m.cfgEditor.isBusy()
-		if !cfgBusy && m.active != ScreenDetail && m.active != ScreenSetup && m.active != ScreenUnlock {
+		settingsBusy := m.active == ScreenSettings && m.settingsView.step != settingsMenu
+		if !cfgBusy && !settingsBusy && m.active != ScreenDetail && m.active != ScreenSetup && m.active != ScreenUnlock {
 			switch msg.String() {
 			case "tab":
 				return m, m.nextTab()
