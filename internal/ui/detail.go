@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/atotto/clipboard"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -40,7 +41,7 @@ type keyDetailModel struct {
 	editFocus int // 0 = tags, 1 = note
 	tagCursor int
 	editTags  []string
-	noteInput textinput.Model
+	noteInput textarea.Model
 }
 
 func newKeyDetailModel(k keys.Key, results []audit.AuditResult, store *storage.Store) keyDetailModel {
@@ -57,10 +58,15 @@ func newKeyDetailModel(k keys.Key, results []audit.AuditResult, store *storage.S
 			meta = &m2
 		}
 	}
-	ti := textinput.New()
-	ti.Placeholder = "add a note..."
-	ti.CharLimit = 200
-	return keyDetailModel{key: k, findings: findings, meta: meta, noteInput: ti}
+	ta := textarea.New()
+	ta.Placeholder = "add a note..."
+	ta.ShowLineNumbers = false
+	ta.SetHeight(4)
+	ta.MaxHeight = 8
+	ta.CharLimit = 0
+	ta.KeyMap.InsertNewline.SetEnabled(true)
+	ta.Blur()
+	return keyDetailModel{key: k, findings: findings, meta: meta, noteInput: ta}
 }
 
 var (
@@ -233,6 +239,11 @@ func (m keyDetailModel) enterEditMode() keyDetailModel {
 	if m.meta != nil {
 		note = m.meta.Note
 	}
+	w := m.width - 22
+	if w < 20 {
+		w = 20
+	}
+	m.noteInput.SetWidth(w)
 	m.noteInput.SetValue(note)
 	m.noteInput.Blur()
 	return m
@@ -244,18 +255,10 @@ func (m keyDetailModel) updateEdit(msg tea.KeyMsg) (keyDetailModel, tea.Cmd) {
 		m.editing = false
 		m.noteInput.Blur()
 		return m, nil
-	case "enter":
+	case "ctrl+s":
 		m.editing = false
 		m.noteInput.Blur()
 		return m, saveMetaCmd(m.key, m.editTags, strings.TrimSpace(m.noteInput.Value()))
-	case "tab":
-		m.editFocus = (m.editFocus + 1) % 2
-		if m.editFocus == 1 {
-			m.noteInput.Focus()
-		} else {
-			m.noteInput.Blur()
-		}
-		return m, nil
 	}
 
 	if m.editFocus == 0 {
@@ -275,8 +278,26 @@ func (m keyDetailModel) updateEdit(msg tea.KeyMsg) (keyDetailModel, tea.Cmd) {
 			} else {
 				m.editTags = append(m.editTags, tag)
 			}
+		case "down":
+			m.editFocus = 1
+			return m, m.noteInput.Focus()
 		}
 		return m, nil
+	}
+
+	// editFocus == 1: note textarea
+	if msg.String() == "up" && m.noteInput.Line() == 0 {
+		m.editFocus = 0
+		m.noteInput.Blur()
+		return m, nil
+	}
+
+	// tab key has empty Runes in bubbletea — insert a tab character explicitly
+	if msg.String() == "tab" {
+		synth := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\t'}}
+		var cmd tea.Cmd
+		m.noteInput, cmd = m.noteInput.Update(synth)
+		return m, cmd
 	}
 
 	var cmd tea.Cmd
@@ -382,7 +403,7 @@ func (m keyDetailModel) view() string {
 		sb.WriteString("\n\n")
 		sb.WriteString(m.viewEditNote())
 		sb.WriteString("\n\n")
-		sb.WriteString(editHintStyle.Render("tab switch · space toggle tag · enter save · esc cancel"))
+		sb.WriteString(editHintStyle.Render("↑/↓ switch fields · space toggle tag · tab indent · ctrl+s save · esc cancel"))
 		return sb.String()
 	}
 
@@ -397,7 +418,14 @@ func (m keyDetailModel) view() string {
 			field("Tags", dimStyle.Render("none"))
 		}
 		if m.meta.Note != "" {
-			field("Note", m.meta.Note)
+			const labelWidth = 18 + 2 // detailLabelStyle.Width + separator
+			const rightMargin = 30
+			wrapWidth := m.width - labelWidth - rightMargin
+			lines := wrapText(m.meta.Note, wrapWidth)
+			field("Note", lines[0])
+			for _, l := range lines[1:] {
+				fmt.Fprintf(&sb, "%s%s\n", strings.Repeat(" ", labelWidth), detailValueStyle.Render(l))
+			}
 		} else {
 			field("Note", dimStyle.Render("none"))
 		}
@@ -499,12 +527,61 @@ func (m keyDetailModel) viewEditNote() string {
 		focusMarker = "> "
 	}
 	lbl := editSectionStyle.Render("Note ")
-	w := m.width - 22
-	if w < 20 {
-		w = 20
+	return focusMarker + lbl + "\n" + m.noteInput.View()
+}
+
+// wrapText wraps s to lines of at most width runes.
+// It breaks at spaces when possible; long words are split mid-rune.
+func wrapText(s string, width int) []string {
+	if width <= 0 {
+		return []string{s}
 	}
-	m.noteInput.Width = w
-	return focusMarker + lbl + " " + m.noteInput.View()
+	var lines []string
+	for _, para := range strings.Split(s, "\n") {
+		words := strings.Fields(para)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		line := []rune{}
+		for _, word := range words {
+			wr := []rune(word)
+			// word itself exceeds width — split it
+			for len(wr) > 0 {
+				space := width - len(line)
+				if len(line) > 0 {
+					space-- // account for the space before word
+				}
+				if space <= 0 {
+					lines = append(lines, string(line))
+					line = []rune{}
+					space = width
+				}
+				if len(line) == 0 {
+					if len(wr) <= width {
+						line = append(line, wr...)
+						wr = nil
+					} else {
+						lines = append(lines, string(wr[:width]))
+						wr = wr[width:]
+					}
+				} else {
+					if len(wr) <= space {
+						line = append(line, ' ')
+						line = append(line, wr...)
+						wr = nil
+					} else {
+						lines = append(lines, string(line))
+						line = []rune{}
+					}
+				}
+			}
+		}
+		if len(line) > 0 {
+			lines = append(lines, string(line))
+		}
+	}
+	return lines
 }
 
 func ifEmpty(s, fallback string) string {
