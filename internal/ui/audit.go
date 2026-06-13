@@ -48,7 +48,7 @@ func (m auditModel) update(msg tea.Msg) (auditModel, tea.Cmd) {
 			if m.cursor < len(m.report.Results)-1 {
 				m.cursor++
 			}
-		case "esc", "q":
+		case "esc":
 			return m, navigate(ScreenKeys)
 		}
 	}

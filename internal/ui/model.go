@@ -209,10 +209,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "q":
-			// quit everywhere except when typing in the keys search field
-			// or when a config editor input has focus
-			cfgBusy := m.active == ScreenConfig && m.cfgEditor.isBusy()
-			if !cfgBusy && !(m.active == ScreenKeys && m.keyList.searching) {
+			// quit only from the keys list (and not while searching)
+			if m.active == ScreenKeys && !m.keyList.searching {
 				return m, tea.Quit
 			}
 		}
@@ -602,9 +600,9 @@ func screenHint(s Screen) string {
 	case ScreenKeys:
 		return "↑/↓ navigate  ·  enter detail  ·  / search  ·  q quit  ·  " + nav
 	case ScreenDetail:
-		return "c copy pubkey  ·  e edit metadata  ·  r rotate  ·  d delete  ·  esc back  ·  q quit"
+		return "c copy pubkey  ·  e edit metadata  ·  r rotate  ·  d delete  ·  esc back"
 	case ScreenAudit:
-		return "↑/↓ navigate  ·  " + nav
+		return "↑/↓ navigate  ·  esc  back  · " + nav
 	case ScreenGenerate:
 		return "↑/↓ next field  ·  space toggle  ·  enter confirm  ·  esc cancel  ·  " + nav
 	case ScreenConfig:

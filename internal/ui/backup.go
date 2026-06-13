@@ -149,7 +149,7 @@ func (m backupModel) updateIdle(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 				}
 			}
 		}
-	case "esc", "q":
+	case "esc":
 		if m.confirmDelete {
 			m.confirmDelete = false
 		} else {
