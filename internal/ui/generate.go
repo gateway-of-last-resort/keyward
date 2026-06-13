@@ -59,7 +59,6 @@ func newGenerateModel(sshDir string) generateModel {
 	ins[inComment] = mkInput("user@host (optional)", false)
 	ins[inPass] = mkInput("leave blank + toggle allow empty", true)
 	ins[inPassConf] = mkInput("confirm passphrase", true)
-	ins[inFilename].Focus()
 
 	return generateModel{
 		sshDir:  sshDir,
