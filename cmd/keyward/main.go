@@ -14,7 +14,24 @@ import (
 	"github.com/gateway-of-last-resort/keyward/internal/ui"
 )
 
+// version is the build version, overridden at release time via
+// -ldflags "-X main.version=...". Defaults to "dev" for local builds.
+var version = "dev"
+
 func main() {
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "--version", "-v", "version":
+			fmt.Printf("keyward %s\n", version)
+			return
+		case "--help", "-h", "help":
+			fmt.Println("keyward — TUI manager for SSH keys, config, and security audit")
+			fmt.Println("\nUsage: keyward [--version] [--help]")
+			fmt.Println("\nRunning with no arguments launches the interactive TUI.")
+			return
+		}
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fatal(err)
