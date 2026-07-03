@@ -267,6 +267,53 @@ func TestLoad_BakRecovery(t *testing.T) {
 	}
 }
 
+// TestLoad_CorruptPrimaryRecoversFromBak covers a crash where the primary file
+// exists but is truncated/corrupt while a good .bak is present. Load must
+// recover from .bak, promote it, and return the data.
+func TestLoad_CorruptPrimaryRecoversFromBak(t *testing.T) {
+	dir := t.TempDir()
+	id := newIdentity(t)
+
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:good")); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Save(s, dir, id); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	metaPath := filepath.Join(dir, "metadata.age")
+	bakPath := metaPath + ".bak"
+
+	// Keep a valid copy as .bak, then corrupt the primary in place.
+	good, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bakPath, good, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, []byte("garbage-not-age"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := storage.Load(dir, id)
+	if err != nil {
+		t.Fatalf("Load with corrupt primary: %v", err)
+	}
+	if _, err := storage.Get(loaded, "SHA256:good"); err != nil {
+		t.Error("key not recovered from .bak when primary was corrupt")
+	}
+
+	// The good backup should have been promoted to the primary path.
+	if _, err := os.Stat(bakPath); !os.IsNotExist(err) {
+		t.Errorf(".bak should be promoted (removed); stat err = %v", err)
+	}
+	if _, err := storage.Load(dir, id); err != nil {
+		t.Errorf("primary not usable after promotion: %v", err)
+	}
+}
+
 // ── Get ───────────────────────────────────────────────────────────────────────
 
 func TestGet(t *testing.T) {

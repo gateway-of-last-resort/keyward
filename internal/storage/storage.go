@@ -31,24 +31,41 @@ func Init(dir string) error {
 }
 
 // Load decrypts and deserialises the metadata store from dir.
-// Returns an empty Store if no metadata file exists yet.
+// Returns an empty Store if no metadata file exists yet. If the primary file is
+// missing OR present-but-corrupt (undecryptable / unparseable), it recovers from
+// the .bak left by a mid-write crash and promotes it to the primary path.
 func Load(dir string, identity age.Identity) (Store, error) {
 
 	metaPath := filepath.Join(dir, metadataFile)
 	bakPath := metaPath + ".bak"
 
-	if _, err := os.Stat(metaPath); errors.Is(err, os.ErrNotExist) {
-		if _, err := os.Stat(bakPath); err == nil {
-			if err := os.Rename(bakPath, metaPath); err != nil {
-				return Store{}, fmt.Errorf("metadata recovery failed: %w", err)
-			}
-		}
+	s, err := readStore(metaPath, identity)
+	if err == nil {
+		return s, nil
 	}
 
-	data, err := os.ReadFile(metaPath)
+	// Primary is unusable. Fall back to the backup, whether the primary was
+	// missing or corrupt. Only promote the backup if it actually loads.
+	if bs, bakErr := readStore(bakPath, identity); bakErr == nil {
+		if rnErr := os.Rename(bakPath, metaPath); rnErr != nil {
+			return Store{}, fmt.Errorf("metadata recovery failed: %w", rnErr)
+		}
+		_ = syncDir(dir)
+		return bs, nil
+	}
+
+	// No usable backup. A missing primary with no backup is a fresh, empty
+	// vault; anything else surfaces the primary's error.
 	if errors.Is(err, os.ErrNotExist) {
 		return Store{Keys: make(map[string]KeyMetadata)}, nil
-	} else if err != nil {
+	}
+	return Store{}, err
+}
+
+// readStore reads, decrypts, and unmarshals a single metadata file.
+func readStore(path string, identity age.Identity) (Store, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return Store{}, err
 	}
 
@@ -66,7 +83,6 @@ func Load(dir string, identity age.Identity) (Store, error) {
 		s.Keys = make(map[string]KeyMetadata)
 	}
 	return s, nil
-
 }
 
 // Save encrypts and atomically writes the store to dir/metadata.age.
