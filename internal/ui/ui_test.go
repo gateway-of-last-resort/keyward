@@ -540,6 +540,47 @@ func TestBackup_RestoreBounds(t *testing.T) {
 	}
 }
 
+// Restore must not touch ~/.ssh without an explicit confirmation. A valid
+// selection lands on stepConfirm; only "y" proceeds, anything else cancels.
+func TestBackup_RestoreRequiresConfirmation(t *testing.T) {
+	vaultDir := t.TempDir()
+	backupsDir := filepath.Join(vaultDir, "backups")
+	if err := writeDummyBackups(backupsDir, "a.tar.age", "b.tar.age"); err != nil {
+		t.Fatal(err)
+	}
+	m := newBackupModel(t.TempDir(), vaultDir, nil)
+	m, _ = m.update(k("r"))
+	m.confirmInput.SetValue("1")
+	m, cmd := m.update(k("enter"))
+
+	// Selecting a backup must NOT immediately restore — it asks to confirm.
+	if m.promptStep != stepConfirm {
+		t.Fatalf("expected stepConfirm after selection; got %v", m.promptStep)
+	}
+	if cmd != nil {
+		t.Fatalf("no command should run before confirmation; got %#v", runCmd(cmd))
+	}
+	if m.restoreTarget == "" {
+		t.Fatal("restoreTarget should hold the chosen backup path")
+	}
+
+	// A non-y key cancels back to the menu without restoring.
+	cancelled, cmd := m.update(k("n"))
+	if cancelled.promptStep != stepIdle {
+		t.Fatalf("n should cancel to stepIdle; got %v", cancelled.promptStep)
+	}
+	if cmd != nil {
+		t.Fatalf("cancel must not run a command; got %#v", runCmd(cmd))
+	}
+
+	// "y" with a locked vault (identity nil) proceeds to the password prompt,
+	// not straight into RestoreBackup.
+	confirmed, _ := m.update(k("y"))
+	if confirmed.promptStep != stepPasswd {
+		t.Fatalf("y with locked vault should go to stepPasswd; got %v", confirmed.promptStep)
+	}
+}
+
 // ── §10 settings ────────────────────────────────────────────────────────────
 
 func enterChangePass(m settingsModel) settingsModel {
