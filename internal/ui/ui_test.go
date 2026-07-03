@@ -282,6 +282,33 @@ func TestGenerate_RSALabelChanges(t *testing.T) { // §7.2
 	}
 }
 
+// generateResult drives the async generation: it runs the batch that submit()
+// returns and extracts the generateResultMsg produced by the generation cmd.
+func generateResult(t *testing.T, cmd tea.Cmd) generateResultMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("submit returned a nil command")
+	}
+	msg := cmd()
+	if r, ok := msg.(generateResultMsg); ok {
+		return r
+	}
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected batch or generateResultMsg, got %T", msg)
+	}
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		if r, ok := c().(generateResultMsg); ok {
+			return r
+		}
+	}
+	t.Fatal("no generateResultMsg in batch")
+	return generateResultMsg{}
+}
+
 func TestGenerate_Ed25519Creates(t *testing.T) { // §7.8
 	dir := t.TempDir()
 	m := newGenerateModel(dir)
@@ -297,6 +324,14 @@ func TestGenerate_Ed25519Creates(t *testing.T) { // §7.8
 	got, cmd := m.submit()
 	if got.formErr != nil {
 		t.Fatalf("generate failed: %v", got.formErr)
+	}
+	if !got.submitting {
+		t.Fatal("submit should mark the model as submitting")
+	}
+	// Feed the async result back into the model; success emits keyGeneratedMsg.
+	got, cmd = got.update(generateResult(t, cmd))
+	if got.submitting {
+		t.Fatal("submitting should be cleared after the result arrives")
 	}
 	msg, ok := runCmd(cmd).(keyGeneratedMsg)
 	if !ok {
@@ -324,12 +359,15 @@ func TestGenerate_RSABitSizeNotLeakedToComment(t *testing.T) {
 	if got.formErr != nil {
 		t.Fatalf("generate failed: %v", got.formErr)
 	}
-	msg := runCmd(cmd).(keyGeneratedMsg)
-	if msg.key.BitSize != 4096 {
-		t.Fatalf("bit size = %d, want 4096", msg.key.BitSize)
+	res := generateResult(t, cmd)
+	if res.err != nil {
+		t.Fatalf("generate failed: %v", res.err)
 	}
-	if msg.key.Comment != "" {
-		t.Fatalf("comment should be empty (number must not leak); got %q", msg.key.Comment)
+	if res.key.BitSize != 4096 {
+		t.Fatalf("bit size = %d, want 4096", res.key.BitSize)
+	}
+	if res.key.Comment != "" {
+		t.Fatalf("comment should be empty (number must not leak); got %q", res.key.Comment)
 	}
 }
 
@@ -340,7 +378,8 @@ func TestGenerate_RSABitSizeTooSmall(t *testing.T) { // §7.10
 	m = genType(m, inComment+1, "1024")
 	m = genType(m, inPass+1, "secret")
 	m = genType(m, inPassConf+1, "secret")
-	got, _ := m.submit()
+	got, cmd := m.submit()
+	got, _ = got.update(generateResult(t, cmd))
 	if got.formErr == nil || !strings.Contains(got.formErr.Error(), "at least 2048") {
 		t.Fatalf("expected bit-size error; got %v", got.formErr)
 	}
@@ -359,7 +398,8 @@ func TestGenerate_DuplicateFilename(t *testing.T) { // §7.11
 		m = m.moveFocus(1)
 	}
 	m = m.toggleCurrent(" ") // allow empty
-	got, _ := m.submit()
+	got, cmd := m.submit()
+	got, _ = got.update(generateResult(t, cmd))
 	if got.formErr == nil || !strings.Contains(got.formErr.Error(), "already exists") {
 		t.Fatalf("expected already-exists error; got %v", got.formErr)
 	}

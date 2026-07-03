@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -28,6 +29,15 @@ type generateModel struct {
 
 	allowEmpty bool // explicit AllowEmptyPassphrase toggle
 	formErr    error
+
+	submitting bool // key generation in progress (async)
+	spinner    spinner.Model
+}
+
+// generateResultMsg carries the outcome of an asynchronous key generation.
+type generateResultMsg struct {
+	key keys.Key
+	err error
 }
 
 const (
@@ -60,10 +70,15 @@ func newGenerateModel(sshDir string) generateModel {
 	ins[inPass] = mkInput("leave blank + toggle allow empty", true)
 	ins[inPassConf] = mkInput("confirm passphrase", true)
 
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(ColorMint)
+
 	return generateModel{
 		sshDir:  sshDir,
 		inputs:  ins,
 		focused: inFilename,
+		spinner: s,
 	}
 }
 
@@ -87,7 +102,31 @@ const fieldCount = 1 + inCount + 1
 
 func (m generateModel) update(msg tea.Msg) (generateModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if m.submitting {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+
+	case generateResultMsg:
+		m.submitting = false
+		if msg.err != nil {
+			m.formErr = msg.err
+			return m, nil
+		}
+		// Drop the passphrase from the inputs, then hand the new key to the
+		// root model.
+		m.inputs[inPass].SetValue("")
+		m.inputs[inPassConf].SetValue("")
+		key := msg.key
+		return m, func() tea.Msg { return keyGeneratedMsg{key: key} }
+
 	case tea.KeyMsg:
+		if m.submitting {
+			return m, nil
+		}
 		switch msg.String() {
 		case "esc":
 			return m, navigate(ScreenKeys)
@@ -185,17 +224,18 @@ func (m generateModel) submit() (generateModel, tea.Cmd) {
 		}
 	}
 
-	k, err := keys.GenerateKeys(dir, opts)
-	if err != nil {
-		m.formErr = err
-		return m, nil
+	// Run generation off the event loop so the TUI stays responsive (RSA in
+	// particular is slow); a spinner shows progress until generateResultMsg.
+	m.submitting = true
+	m.formErr = nil
+	for i := range m.inputs {
+		m.inputs[i].Blur()
 	}
-
-	// Drop the passphrase from the input fields so it isn't retained after use.
-	m.inputs[inPass].SetValue("")
-	m.inputs[inPassConf].SetValue("")
-
-	return m, func() tea.Msg { return keyGeneratedMsg{key: k} }
+	genCmd := func() tea.Msg {
+		k, err := keys.GenerateKeys(dir, opts)
+		return generateResultMsg{key: k, err: err}
+	}
+	return m, tea.Batch(m.spinner.Tick, genCmd)
 }
 
 var inputLabels = [inCount]string{
@@ -210,6 +250,11 @@ func (m generateModel) view() string {
 	var sb strings.Builder
 
 	sb.WriteString(sectionHeaderStyle.Width(m.width-2).Render("Generate SSH Key") + "\n\n")
+
+	if m.submitting {
+		sb.WriteString(m.spinner.View() + "  " + dimStyle.Render("Generating key...") + "\n")
+		return sb.String()
+	}
 
 	// ── Algorithm toggle ──────────────────────────────
 	algoFocused := m.focused == 0
