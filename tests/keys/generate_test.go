@@ -15,7 +15,7 @@ func generateOpts(dir, filename string) keys.GenerateOptions {
 	return keys.GenerateOptions{
 		Algorithm:            keys.AlgorithmEd25519,
 		Filename:             filename,
-		Passphrase:           "strong-passphrase",
+		Passphrase:           []byte("strong-passphrase"),
 		AllowEmptyPassphrase: false,
 	}
 }
@@ -100,7 +100,7 @@ func TestGenerate_RSA_ExplicitBitSize(t *testing.T) {
 		Algorithm:  keys.AlgorithmRSA,
 		Filename:   "id_rsa",
 		BitSize:    2048,
-		Passphrase: "pass",
+		Passphrase: []byte("pass"),
 	}
 
 	k, err := keys.GenerateKeys(dir, opts)
@@ -123,7 +123,7 @@ func TestGenerate_RSA_DefaultBitSize(t *testing.T) {
 		Algorithm:  keys.AlgorithmRSA,
 		Filename:   "id_rsa",
 		BitSize:    0, // should default to 4096
-		Passphrase: "pass",
+		Passphrase: []byte("pass"),
 	}
 
 	k, err := keys.GenerateKeys(dir, opts)
@@ -141,7 +141,7 @@ func TestGenerate_RSA_TooSmall(t *testing.T) {
 		Algorithm:  keys.AlgorithmRSA,
 		Filename:   "id_rsa",
 		BitSize:    1024,
-		Passphrase: "pass",
+		Passphrase: []byte("pass"),
 	}
 
 	_, err := keys.GenerateKeys(dir, opts)
@@ -155,7 +155,7 @@ func TestGenerate_InvalidAlgorithm(t *testing.T) {
 	opts := keys.GenerateOptions{
 		Algorithm:  keys.Algorithm("dsa"),
 		Filename:   "id_dsa",
-		Passphrase: "pass",
+		Passphrase: []byte("pass"),
 	}
 
 	_, err := keys.GenerateKeys(dir, opts)
@@ -188,7 +188,7 @@ func TestGenerate_DirNotFound(t *testing.T) {
 func TestGenerate_EmptyPassphrase_RequiresFlag(t *testing.T) {
 	dir := t.TempDir()
 	opts := generateOpts(dir, "id_ed25519")
-	opts.Passphrase = ""
+	opts.Passphrase = nil
 	opts.AllowEmptyPassphrase = false // default
 
 	_, err := keys.GenerateKeys(dir, opts)
@@ -200,12 +200,30 @@ func TestGenerate_EmptyPassphrase_RequiresFlag(t *testing.T) {
 func TestGenerate_EmptyPassphrase_WithFlag(t *testing.T) {
 	dir := t.TempDir()
 	opts := generateOpts(dir, "id_ed25519")
-	opts.Passphrase = ""
+	opts.Passphrase = nil
 	opts.AllowEmptyPassphrase = true // explicit CI/CD intent
 
 	_, err := keys.GenerateKeys(dir, opts)
 	if err != nil {
 		t.Fatalf("Generate with AllowEmptyPassphrase=true: %v", err)
+	}
+}
+
+// TestGenerate_ZeroesPassphrase verifies that GenerateKeys wipes the passphrase
+// bytes it was given, so plaintext key passphrases don't linger in memory.
+func TestGenerate_ZeroesPassphrase(t *testing.T) {
+	dir := t.TempDir()
+	pass := []byte("super-secret-pass")
+	opts := generateOpts(dir, "id_ed25519")
+	opts.Passphrase = pass
+
+	if _, err := keys.GenerateKeys(dir, opts); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	for i, b := range pass {
+		if b != 0 {
+			t.Fatalf("passphrase byte %d not zeroed; slice = %q", i, pass)
+		}
 	}
 }
 
@@ -297,7 +315,7 @@ func TestGenerate_AtomicCleanup(t *testing.T) {
 	opts := keys.GenerateOptions{
 		Algorithm:  keys.Algorithm("invalid"),
 		Filename:   "id_bad",
-		Passphrase: "pass",
+		Passphrase: []byte("pass"),
 	}
 
 	_, err := keys.GenerateKeys(dir, opts)

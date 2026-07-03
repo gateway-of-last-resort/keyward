@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
 var (
@@ -38,12 +40,15 @@ const (
 
 // GenerateOptions configures SSH key generation.
 type GenerateOptions struct {
-	Algorithm            Algorithm
-	Filename             string
-	Overwrite            bool
-	BitSize              int
-	Comment              string
-	Passphrase           string
+	Algorithm Algorithm
+	Filename  string
+	Overwrite bool
+	BitSize   int
+	Comment   string
+	// Passphrase is the private-key passphrase as raw bytes so it can be zeroed.
+	// GenerateKeys zeroes it (and any derived copy) before returning; callers
+	// must treat it as consumed.
+	Passphrase           []byte
 	AllowEmptyPassphrase bool
 }
 
@@ -57,13 +62,14 @@ func (a Algorithm) IsValid() bool {
 	}
 }
 
-// risks of passphrase exposure in core dumps or memory inspection tools.
-// TODO: change Passphrase field type from string to []byte in GenerateOptions,
-// then explicitly zero it after use: for i := range opts.Passphrase { opts.Passphrase[i] = 0 }
-
 // GenerateKeys creates a new SSH key pair in dir according to opts.
 // Ed25519 ignores BitSize; RSA defaults to 4096 when BitSize is 0.
+// The passphrase in opts is zeroed before returning.
 func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
+
+	// Zero the passphrase (and thus the caller's shared backing array) once
+	// we're done marshaling, limiting its lifetime in memory.
+	defer crypto.ZeroBytes(opts.Passphrase)
 
 	info, errDir := os.Stat(dir)
 	if errDir != nil {
@@ -84,7 +90,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		return Key{}, ErrMissingFilename
 	}
 
-	if opts.Passphrase == "" {
+	if len(opts.Passphrase) == 0 {
 		if !opts.AllowEmptyPassphrase {
 			return Key{}, ErrEmptyPassphrase
 		}
@@ -124,8 +130,8 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 
 		var privBlock *pem.Block
 
-		if opts.Passphrase != "" {
-			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(edPriv, opts.Comment, []byte(opts.Passphrase))
+		if len(opts.Passphrase) != 0 {
+			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(edPriv, opts.Comment, opts.Passphrase)
 		} else {
 			privBlock, err = ssh.MarshalPrivateKey(edPriv, opts.Comment)
 		}
@@ -160,8 +166,8 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 
 		var privBlock *pem.Block
 
-		if opts.Passphrase != "" {
-			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(rsaPriv, opts.Comment, []byte(opts.Passphrase))
+		if len(opts.Passphrase) != 0 {
+			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(rsaPriv, opts.Comment, opts.Passphrase)
 		} else {
 			privBlock, err = ssh.MarshalPrivateKey(rsaPriv, opts.Comment)
 		}
@@ -230,7 +236,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 	return Key{
 		PrivateKeyPath: privatePath,
 		PublicKeyPath:  publicPath,
-		HasPassphrase:  opts.Passphrase != "",
+		HasPassphrase:  len(opts.Passphrase) != 0,
 		PrivatePerm:    0600,
 		PublicPerm:     0644,
 		Algorithm:      string(opts.Algorithm),

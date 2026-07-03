@@ -173,7 +173,7 @@ func (m generateModel) submit() (generateModel, tea.Cmd) {
 		Algorithm:            algo,
 		Filename:             filename,
 		Comment:              comment,
-		Passphrase:           pass,
+		Passphrase:           []byte(pass),
 		AllowEmptyPassphrase: m.allowEmpty,
 	}
 	if algo == keys.AlgorithmRSA {
@@ -190,6 +190,10 @@ func (m generateModel) submit() (generateModel, tea.Cmd) {
 		m.formErr = err
 		return m, nil
 	}
+
+	// Drop the passphrase from the input fields so it isn't retained after use.
+	m.inputs[inPass].SetValue("")
+	m.inputs[inPassConf].SetValue("")
 
 	return m, func() tea.Msg { return keyGeneratedMsg{key: k} }
 }
