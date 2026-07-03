@@ -61,6 +61,9 @@ func ValidateParamValue(key, val string) error {
 	if val == "" {
 		return fmt.Errorf("value must not be empty")
 	}
+	if hasControlChars(val) {
+		return ErrControlChars
+	}
 	low := strings.ToLower(key)
 	if _, ok := numericKeys[low]; ok {
 		n, err := strconv.Atoi(val)

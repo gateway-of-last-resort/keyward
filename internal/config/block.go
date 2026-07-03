@@ -48,7 +48,7 @@ func SetParam(b *Block, key string, values []string) bool {
 	n := min(len(indices), len(values))
 
 	for i := 0; i < n; i++ {
-		b.Tokens[indices[i]].Value = values[i]
+		b.Tokens[indices[i]].Value = sanitize(values[i])
 		b.Tokens[indices[i]].Raw = ""
 	}
 
@@ -58,7 +58,7 @@ func SetParam(b *Block, key string, values []string) bool {
 			newToken := Token{
 				Type:  PARAM,
 				Key:   key,
-				Value: values[i],
+				Value: sanitize(values[i]),
 				Sep:   " ",
 				Raw:   "",
 			}
@@ -105,7 +105,7 @@ func AddParam(b *Block, key string, value string) {
 	newToken := Token{
 		Type:  PARAM,
 		Key:   key,
-		Value: value,
+		Value: sanitize(value),
 		Sep:   " ",
 	}
 	b.Tokens = slices.Insert(b.Tokens, idx, newToken)
@@ -123,6 +123,7 @@ func RemoveParamAt(b *Block, idx int) {
 // RenameHost updates the Host token value and b.Pattern to pattern.
 func RenameHost(b *Block, pattern string) {
 
+	pattern = sanitize(pattern)
 	for i := range b.Tokens {
 		if b.Tokens[i].Type == HOST {
 			b.Tokens[i].Value = pattern
