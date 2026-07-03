@@ -138,7 +138,9 @@ func (m configModel) hints() string {
 	case m.confirmDeleteParam:
 		return "d  confirm delete param  ·  esc  cancel"
 	case m.paneRight:
-		return "↑/↓  navigate  ·  a  add  ·  e  edit  ·  t  toggle  ·  d  delete  ·  esc  back  ·  s  save  ·  " + nav
+		// Omit the "switch screens" hint here: the parameters pane already has
+		// a long bar and the extra text pushes the frame wider than the view.
+		return "↑/↓  navigate  ·  a  add  ·  e  edit  ·  t  toggle  ·  d  delete  ·  esc  back  ·  s  save"
 	default:
 		return "↑/↓  navigate  ·  a  add  ·  r  rename  ·  d  delete  ·  enter  open  ·  s  save  ·  " + nav
 	}

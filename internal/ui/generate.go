@@ -324,8 +324,12 @@ func (m generateModel) view() string {
 	}
 	filename := m.inputs[inFilename].Value()
 	if filename != "" {
-		preview := filepath.Join(dir, filename)
-		sb.WriteString("\n  " + dimStyle.Render("will create: "+preview+" / "+preview+".pub") + "\n")
+		priv := filepath.Join(dir, filename)
+		// Each path on its own indented line so a long path doesn't widen the
+		// frame, and the two paths line up under each other.
+		sb.WriteString("\n  " + dimStyle.Render("will create:") + "\n")
+		sb.WriteString("    " + dimStyle.Render(priv) + "\n")
+		sb.WriteString("    " + dimStyle.Render(priv+".pub") + "\n")
 	}
 
 	// ── Error ─────────────────────────────────────────
@@ -334,7 +338,8 @@ func (m generateModel) view() string {
 	}
 
 	// ── Submit hint ───────────────────────────────────
-	sb.WriteString("\n  " + dimStyle.Render("press enter on last field to generate"))
+	// Two blank lines above so the hint stands clear of the path preview.
+	sb.WriteString("\n\n  " + dimStyle.Render("press enter on last field to generate"))
 
 	return sb.String()
 }
