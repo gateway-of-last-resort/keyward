@@ -14,7 +14,19 @@ import (
 	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
-func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error) {
+// BackupResult reports the outcome of a successful CreateBackup.
+//   - Path is the written archive.
+//   - Skipped lists ~/.ssh entries that couldn't be read and were left OUT of
+//     the archive; the backup still succeeded for everything else, so callers
+//     should surface this rather than let the user assume full coverage.
+//   - PruneErr is a non-fatal error from removing old backups after the write.
+type BackupResult struct {
+	Path     string
+	Skipped  []string
+	PruneErr error
+}
+
+func CreateBackup(sshDir, vaultDir string, identity age.Identity) (BackupResult, error) {
 	skipFiles := map[string]bool{
 		"known_hosts":     true,
 		"authorized_keys": true,
@@ -27,7 +39,7 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error
 
 	entries, err := os.ReadDir(sshDir)
 	if err != nil {
-		return "", ErrBackupFailed
+		return BackupResult{}, ErrBackupFailed
 	}
 
 	var files []archiveEntry
@@ -52,14 +64,17 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error
 	tarBuffer := new(bytes.Buffer)
 	tarWriter := tar.NewWriter(tarBuffer)
 
+	var skipped []string
 	for _, f := range files {
 		data, err := os.ReadFile(f.path)
 		if err != nil {
+			skipped = append(skipped, f.tarName)
 			continue
 		}
 
 		stat, err := os.Stat(f.path)
 		if err != nil {
+			skipped = append(skipped, f.tarName)
 			continue
 		}
 
@@ -71,20 +86,20 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error
 		}
 
 		if err := tarWriter.WriteHeader(header); err != nil {
-			return "", ErrBackupFailed
+			return BackupResult{}, ErrBackupFailed
 		}
 		if _, err := tarWriter.Write(data); err != nil {
-			return "", ErrBackupFailed
+			return BackupResult{}, ErrBackupFailed
 		}
 	}
 
 	if err := tarWriter.Close(); err != nil {
-		return "", ErrBackupFailed
+		return BackupResult{}, ErrBackupFailed
 	}
 
 	x25519Identity, ok := identity.(*age.X25519Identity)
 	if !ok {
-		return "", ErrInvalidIdentity
+		return BackupResult{}, ErrInvalidIdentity
 	}
 
 	plaintext := tarBuffer.Bytes()
@@ -92,24 +107,26 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error
 
 	ciphertext, err := crypto.Encrypt(plaintext, x25519Identity.Recipient())
 	if err != nil {
-		return "", ErrBackupFailed
+		return BackupResult{}, ErrBackupFailed
 	}
 
 	backupPath := filepath.Join(vaultDir, backupDir)
 	if err := os.MkdirAll(backupPath, 0700); err != nil {
-		return "", ErrBackupFailed
+		return BackupResult{}, ErrBackupFailed
 	}
 
 	filename := time.Now().Format("2006-01-02_15-04-05") + ".tar.age"
 	finalPath := filepath.Join(backupPath, filename)
 
 	if err := atomicWriteFile(finalPath, ciphertext, 0600); err != nil {
-		return "", ErrBackupFailed
+		return BackupResult{}, ErrBackupFailed
 	}
 
-	pruneBackups(backupPath, maxBackups)
+	// The archive is durably written; pruning old copies is best-effort and its
+	// failure must not fail the backup, but it is reported so it isn't lost.
+	pruneErr := pruneBackups(backupPath, maxBackups)
 
-	return finalPath, nil
+	return BackupResult{Path: finalPath, Skipped: skipped, PruneErr: pruneErr}, nil
 }
 
 const maxBackups = 5
@@ -123,10 +140,12 @@ const (
 )
 
 // pruneBackups removes the oldest .tar.age files in dir, keeping at most max.
-func pruneBackups(dir string, max int) {
+// It returns any os.Remove failures joined together rather than swallowing them,
+// so the caller can report that stale backups still linger.
+func pruneBackups(dir string, max int) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return
+		return err
 	}
 	var files []string
 	for _, e := range entries {
@@ -135,10 +154,14 @@ func pruneBackups(dir string, max int) {
 		}
 	}
 	// entries are sorted by name (timestamp prefix), so oldest are first
+	var errs []error
 	for len(files) > max {
-		os.Remove(files[0])
+		if err := os.Remove(files[0]); err != nil {
+			errs = append(errs, err)
+		}
 		files = files[1:]
 	}
+	return errors.Join(errs...)
 }
 
 func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) error {
@@ -199,48 +222,57 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 			continue
 		}
 
-		_, statErr := os.Stat(targetPath)
-		if !errors.Is(statErr, os.ErrNotExist) {
-			os.Rename(targetPath, targetPath+".pre-restore")
+		moved := false
+		if _, statErr := os.Stat(targetPath); !errors.Is(statErr, os.ErrNotExist) {
+			if err := os.Rename(targetPath, targetPath+".pre-restore"); err != nil {
+				return errors.Join(ErrRestoreFailed, err)
+			}
+			moved = true
+		}
+
+		// rollback puts the pre-existing file back if we moved one aside. Its own
+		// failure is joined into the returned error so the user learns the target
+		// is now in an inconsistent state instead of it being silently swallowed.
+		rollback := func() error {
+			if !moved {
+				return nil
+			}
+			return os.Rename(targetPath+".pre-restore", targetPath)
 		}
 
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0700); err != nil {
-			os.Rename(targetPath+".pre-restore", targetPath)
-			return ErrRestoreFailed
+			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 
 		dir := filepath.Dir(targetPath)
 		tmp, err := os.CreateTemp(dir, "restore-*.tmp")
 		if err != nil {
-			os.Rename(targetPath+".pre-restore", targetPath)
-			return ErrRestoreFailed
+			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 		tmpPath := tmp.Name()
 
 		if _, err := tmp.Write(fileData); err != nil {
 			tmp.Close()
 			os.Remove(tmpPath)
-			os.Rename(targetPath+".pre-restore", targetPath)
-			return ErrRestoreFailed
+			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 		if err := tmp.Close(); err != nil {
 			os.Remove(tmpPath)
-			os.Rename(targetPath+".pre-restore", targetPath)
-			return ErrRestoreFailed
+			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 		if err := os.Rename(tmpPath, targetPath); err != nil {
 			os.Remove(tmpPath)
-			os.Rename(targetPath+".pre-restore", targetPath)
-			return ErrRestoreFailed
+			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 		// Clamp to at most owner rw; never trust the archive's mode bits (a
 		// restored private key must not land at 0777).
 		if err := os.Chmod(targetPath, os.FileMode(header.Mode).Perm()&0600); err != nil {
-			os.Rename(targetPath+".pre-restore", targetPath)
-			return ErrRestoreFailed
+			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 
-		os.Remove(targetPath + ".pre-restore")
+		if moved {
+			os.Remove(targetPath + ".pre-restore")
+		}
 	}
 
 	return nil

@@ -564,15 +564,18 @@ func TestCreateRestoreBackup_RoundTrip(t *testing.T) {
 		t.Fatalf("Save before backup: %v", err)
 	}
 
-	backupPath, err := storage.CreateBackup(sshDir, vaultDir, id)
+	res, err := storage.CreateBackup(sshDir, vaultDir, id)
 	if err != nil {
 		t.Fatalf("CreateBackup: %v", err)
 	}
-	if _, err := os.Stat(backupPath); err != nil {
+	if _, err := os.Stat(res.Path); err != nil {
 		t.Fatalf("backup file not created: %v", err)
 	}
+	if len(res.Skipped) != 0 {
+		t.Errorf("unexpected skipped files: %v", res.Skipped)
+	}
 
-	if err := storage.RestoreBackup(backupPath, restoreSSH, restoreVault, id); err != nil {
+	if err := storage.RestoreBackup(res.Path, restoreSSH, restoreVault, id); err != nil {
 		t.Fatalf("RestoreBackup: %v", err)
 	}
 
@@ -610,12 +613,12 @@ func TestCreateBackup_SkipsKnownHostsAndAuthorizedKeys(t *testing.T) {
 	os.WriteFile(filepath.Join(sshDir, "authorized_keys"), []byte("auth data"), 0644)
 	os.WriteFile(filepath.Join(sshDir, "id_ed25519"), []byte("key data"), 0600)
 
-	backupPath, err := storage.CreateBackup(sshDir, vaultDir, id)
+	res, err := storage.CreateBackup(sshDir, vaultDir, id)
 	if err != nil {
 		t.Fatalf("CreateBackup: %v", err)
 	}
 
-	if err := storage.RestoreBackup(backupPath, restoreSSH, restoreVault, id); err != nil {
+	if err := storage.RestoreBackup(res.Path, restoreSSH, restoreVault, id); err != nil {
 		t.Fatalf("RestoreBackup: %v", err)
 	}
 
@@ -629,6 +632,52 @@ func TestCreateBackup_SkipsKnownHostsAndAuthorizedKeys(t *testing.T) {
 	}
 }
 
+func TestCreateBackup_ReportsSkippedUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("relies on unix file-permission semantics")
+	}
+	sshDir := t.TempDir()
+	vaultDir := t.TempDir()
+	restoreSSH := t.TempDir()
+	restoreVault := t.TempDir()
+	id := newIdentity(t)
+
+	if err := os.WriteFile(filepath.Join(sshDir, "id_ed25519"), []byte("good key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(sshDir, "id_locked")
+	if err := os.WriteFile(locked, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0600) })
+	// Root ignores the 0000 mode, so the file wouldn't be skipped — skip then.
+	if _, err := os.ReadFile(locked); err == nil {
+		t.Skip("cannot make a file unreadable (running as root?)")
+	}
+
+	res, err := storage.CreateBackup(sshDir, vaultDir, id)
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0] != "id_locked" {
+		t.Fatalf("Skipped = %v, want [id_locked]", res.Skipped)
+	}
+
+	// The backup must still succeed and contain the readable key.
+	if err := storage.RestoreBackup(res.Path, restoreSSH, restoreVault, id); err != nil {
+		t.Fatalf("RestoreBackup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreSSH, "id_ed25519")); err != nil {
+		t.Errorf("readable key missing from backup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreSSH, "id_locked")); !os.IsNotExist(err) {
+		t.Errorf("unreadable file should not be in the archive")
+	}
+}
+
 func TestCreateBackup_FilePermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("chmod semantics differ on Windows")
@@ -638,12 +687,12 @@ func TestCreateBackup_FilePermissions(t *testing.T) {
 	vaultDir := t.TempDir()
 	id := newIdentity(t)
 
-	backupPath, err := storage.CreateBackup(sshDir, vaultDir, id)
+	res, err := storage.CreateBackup(sshDir, vaultDir, id)
 	if err != nil {
 		t.Fatalf("CreateBackup: %v", err)
 	}
 
-	info, err := os.Stat(backupPath)
+	info, err := os.Stat(res.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -674,12 +723,12 @@ func TestRestoreBackup_WrongIdentity(t *testing.T) {
 	id1 := newIdentity(t)
 	id2 := newIdentity(t)
 
-	backupPath, err := storage.CreateBackup(sshDir, vaultDir, id1)
+	res, err := storage.CreateBackup(sshDir, vaultDir, id1)
 	if err != nil {
 		t.Fatalf("CreateBackup: %v", err)
 	}
 
-	err = storage.RestoreBackup(backupPath, t.TempDir(), t.TempDir(), id2)
+	err = storage.RestoreBackup(res.Path, t.TempDir(), t.TempDir(), id2)
 	if !errors.Is(err, storage.ErrRestoreFailed) {
 		t.Errorf("err = %v, want ErrRestoreFailed", err)
 	}
