@@ -27,30 +27,11 @@ func LoadPrefs(vaultDir string) Prefs {
 	return p
 }
 
-// SavePrefs writes preferences to vaultDir atomically.
+// SavePrefs writes preferences to vaultDir atomically and durably.
 func SavePrefs(vaultDir string, p Prefs) error {
 	data, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(vaultDir, prefsFile)
-	tmp, err := os.CreateTemp(vaultDir, "prefs-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-	return os.Chmod(path, 0600)
+	return atomicWriteFile(filepath.Join(vaultDir, prefsFile), data, 0600)
 }

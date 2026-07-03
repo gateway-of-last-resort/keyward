@@ -128,6 +128,67 @@ func TestSave_UpdatesSavedAt(t *testing.T) {
 	}
 }
 
+// TestSave_FailureKeepsDataAndSavedAt injects a write failure by making the
+// vault dir read-only. Save must fail, leave the previously saved metadata
+// intact, and NOT advance the caller's SavedAt (which would claim a save that
+// never hit disk).
+func TestSave_FailureKeepsDataAndSavedAt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only dir does not block writes the same way on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission bits")
+	}
+
+	dir := t.TempDir()
+	id := newIdentity(t)
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:first")); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Save(s, dir, id); err != nil {
+		t.Fatalf("initial Save: %v", err)
+	}
+	savedAt := s.SavedAt
+
+	// Add another key, then block writes and attempt to persist it.
+	if err := storage.Put(s, testMeta("SHA256:second")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0700) })
+
+	if err := storage.Save(s, dir, id); err == nil {
+		t.Fatal("expected Save to fail on a read-only directory")
+	}
+
+	// SavedAt must be unchanged: the write did not reach disk.
+	if !s.SavedAt.Equal(savedAt) {
+		t.Errorf("SavedAt advanced on failed Save: %v -> %v", savedAt, s.SavedAt)
+	}
+
+	// The first, successfully-saved state must still be loadable and must not
+	// contain the second key.
+	os.Chmod(dir, 0700)
+	loaded, err := storage.Load(dir, id)
+	if err != nil {
+		t.Fatalf("Load after failed Save: %v", err)
+	}
+	if _, err := storage.Get(loaded, "SHA256:first"); err != nil {
+		t.Errorf("first key lost after failed Save: %v", err)
+	}
+	if _, err := storage.Get(loaded, "SHA256:second"); err == nil {
+		t.Error("second key must not be present after a failed Save")
+	}
+
+	// No orphaned .bak must remain after a rolled-back Save.
+	if _, err := os.Stat(filepath.Join(dir, "metadata.age.bak")); !os.IsNotExist(err) {
+		t.Errorf("metadata.age.bak should be rolled back, stat err = %v", err)
+	}
+}
+
 func TestSave_FilePermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("chmod semantics differ on Windows")

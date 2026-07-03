@@ -103,26 +103,7 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error
 	filename := time.Now().Format("2006-01-02_15-04-05") + ".tar.age"
 	finalPath := filepath.Join(backupPath, filename)
 
-	tmp, err := os.CreateTemp(backupPath, "backup-*.tmp")
-	if err != nil {
-		return "", ErrBackupFailed
-	}
-	tmpPath := tmp.Name()
-
-	if _, err := tmp.Write(ciphertext); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return "", ErrBackupFailed
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return "", ErrBackupFailed
-	}
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		os.Remove(tmpPath)
-		return "", ErrBackupFailed
-	}
-	if err := os.Chmod(finalPath, 0600); err != nil {
+	if err := atomicWriteFile(finalPath, ciphertext, 0600); err != nil {
 		return "", ErrBackupFailed
 	}
 
