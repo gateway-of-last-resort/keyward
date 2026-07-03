@@ -108,6 +108,11 @@ unlock, so no manual migration is needed.
   `.bak` copy and roll it back via rename if the operation fails. Key rotation
   leaves `.bak` copies of the previous key pair.
 - **Memory hygiene.** In-memory key material (`[]byte`) is zeroed after use.
+  One residual window remains: the age identity must pass through a Go `string`
+  when it is encrypted and decrypted, and a string's backing array cannot be
+  zeroed — it lingers on the heap until garbage collection. Exploiting this needs
+  a separate memory-disclosure primitive (core dump, swap, `/proc`); the `[]byte`
+  buffers around it are still wiped.
 - **Backup retention.** Config backups are capped (last 5 kept) to limit how
   many copies of your SSH config linger on disk.
 

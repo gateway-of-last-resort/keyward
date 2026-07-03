@@ -69,6 +69,10 @@ func writeMasterKey(path string, identity *age.X25519Identity, password string) 
 	// The header (magic, version, argon2 params, salt, nonce) is authenticated as
 	// AEAD associated data, so it can't be altered independently of the ciphertext.
 	header := buildHeader(versionV2, argon2idTime, argon2idMemory, argon2idThreads, salt, nonce)
+	// identity.String() returns the secret age key as a Go string, whose backing
+	// array cannot be zeroed and lingers on the heap until GC. This residual
+	// window is imposed by age's string-only API; we minimize it by using the
+	// value inline rather than binding it to a variable. See SECURITY.md.
 	encrypted := cipher.Seal(nil, nonce, []byte(identity.String()), header)
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), "master.key.tmp*")
@@ -246,6 +250,10 @@ func LoadMasterKey(path, password string) (age.Identity, error) {
 	}
 	defer ZeroBytes(decrypted)
 
+	// string(decrypted) copies the secret into a Go string that ParseX25519Identity
+	// requires; like the write path, that string's backing array can't be zeroed
+	// and survives until GC. Same age-API limitation, same residual window — the
+	// decrypted []byte itself is still zeroed above. See SECURITY.md.
 	identity, err := age.ParseX25519Identity(string(decrypted))
 	if err != nil {
 		return nil, ErrCorruptedMasterKey
