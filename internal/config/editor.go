@@ -8,7 +8,10 @@ import (
 func findBlockIdx(c *Config, pattern string) int {
 	idx := -1
 	for i := range c.Blocks {
-		if strings.EqualFold(c.Blocks[i].Pattern, pattern) {
+		// Host patterns are matched case-sensitively (OpenSSH semantics), the
+		// same way duplicate detection compares them — so "Foo" and "foo" are
+		// distinct blocks and edits never target the wrong one.
+		if c.Blocks[i].Pattern == pattern {
 			idx = i
 			break
 		}
@@ -25,10 +28,11 @@ func serializeBlock(b *Block) string {
 	return sb.String()
 }
 
-// FindBlock returns a pointer to the block matching pattern (case-insensitive), or nil.
+// FindBlock returns a pointer to the block whose pattern matches exactly
+// (case-sensitive, per OpenSSH), or nil.
 func FindBlock(c *Config, pattern string) *Block {
 	for i := range c.Blocks {
-		if strings.EqualFold(c.Blocks[i].Pattern, pattern) {
+		if c.Blocks[i].Pattern == pattern {
 			return &c.Blocks[i]
 		}
 	}
