@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -150,16 +151,17 @@ func checkPermissions(key keys.Key) []AuditResult {
 				Message:  "Private key does not exist or damaged",
 				Fix:      "Make sure file exists and not damaged",
 			})
-		} else {
-			if stat.Mode().Perm() != 0600 {
-				results = append(results, AuditResult{
-					KeyPath:  key.PrivateKeyPath,
-					Severity: Critical,
-					Category: CategoryKey,
-					Message:  "Permissions must be 0600",
-					Fix:      "chmod 600 " + key.PrivateKeyPath,
-				})
-			}
+		} else if runtime.GOOS != "windows" && stat.Mode().Perm() != 0600 {
+			// On Windows os.FileMode is synthesized from FILE_ATTRIBUTE_READONLY
+			// and never equals 0600, so a POSIX-bit comparison would flag every
+			// key Critical regardless of the real ACL. Skip it there.
+			results = append(results, AuditResult{
+				KeyPath:  key.PrivateKeyPath,
+				Severity: Critical,
+				Category: CategoryKey,
+				Message:  "Permissions must be 0600",
+				Fix:      "chmod 600 " + key.PrivateKeyPath,
+			})
 		}
 	}
 
@@ -280,16 +282,24 @@ func newCheckSSHDirPermissions(dir string) SystemCheck {
 				Message:  "Can't check permissions on this directory",
 				Fix:      "Check that " + dir + " is accessible",
 			})
-		} else {
-			if stat.Mode().Perm() != 0700 {
-				results = append(results, AuditResult{
-					KeyPath:  dir,
-					Severity: Critical,
-					Category: CategorySystem,
-					Message:  "Permissions must be 0700",
-					Fix:      "chmod 0700 " + dir,
-				})
-			}
+		} else if runtime.GOOS == "windows" {
+			// POSIX permission bits aren't meaningful on Windows (ACL != mode),
+			// so report that this check is skipped rather than a false Critical.
+			results = append(results, AuditResult{
+				KeyPath:  dir,
+				Severity: Info,
+				Category: CategorySystem,
+				Message:  "Directory permissions not checked on Windows",
+				Fix:      "Verify " + dir + " is restricted to your user via NTFS ACLs",
+			})
+		} else if stat.Mode().Perm() != 0700 {
+			results = append(results, AuditResult{
+				KeyPath:  dir,
+				Severity: Critical,
+				Category: CategorySystem,
+				Message:  "Permissions must be 0700",
+				Fix:      "chmod 0700 " + dir,
+			})
 		}
 
 		return results
