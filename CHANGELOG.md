@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-04
+
+Cryptographic hardening and more honest backups. Existing `master.key` files are
+upgraded automatically on the next unlock — no action needed.
+
+### Added
+
+- Test suite for the `crypto` package: master-key round-trips, header-parser
+  boundary cases, and encrypt/decrypt error paths.
+
+### Security
+
+- The `master.key` header (argon2 parameters, salt, nonce) is now authenticated
+  as AEAD associated data, so tampering with the stored KDF parameters is
+  detected on unlock. This is format v2; v1 files are read and migrated in place
+  automatically on the next successful unlock.
+- Reject newlines and other control characters in SSH config values and host
+  patterns, closing a potential directive-injection vector.
+- Documented the residual memory window where the age identity passes through a
+  non-zeroable Go string.
+
+### Changed
+
+- Backups are honest about partial results: `CreateBackup` reports files it
+  couldn't read, backup pruning surfaces removal errors, and restore no longer
+  swallows rollback failures.
+
 ## [0.1.5] - 2026-07-03
 
 Reliability and security hardening from a full code audit. No file formats
@@ -70,6 +97,7 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/gateway-of-last-resort/keyward/compare/v0.1.0...v0.1.5
 [0.1.0]: https://github.com/gateway-of-last-resort/keyward/releases/tag/v0.1.0
