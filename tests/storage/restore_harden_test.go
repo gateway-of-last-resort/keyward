@@ -67,7 +67,7 @@ func TestRestore_ClampsPermissionsAndBlocksTraversal(t *testing.T) {
 	id := newIdentity(t)
 	backup := filepath.Join(root, "hostile.tar.age")
 	writeBackupArchive(t, backup, id, []tarEntry{
-		{name: "id_rsa", mode: 0777, data: []byte("PRIVATE")}, // world-writable
+		{name: "id_rsa", mode: 0777, data: []byte("PRIVATE")},  // world-writable
 		{name: "../escape", mode: 0644, data: []byte("pwned")}, // path traversal
 	})
 
