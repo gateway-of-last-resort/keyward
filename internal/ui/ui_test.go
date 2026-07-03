@@ -589,14 +589,72 @@ func TestSettings_SSHDirEmpty(t *testing.T) { // §10.10
 }
 
 func TestSettings_SSHDirChangeEmitsMsg(t *testing.T) { // §10.9
+	dir := t.TempDir() // must be a real, existing directory to pass validation
 	m := newSettingsModel("master.key", "/ssh", "/vault")
 	m, _ = m.updateMenu(k("down"))
 	m, _ = m.updateMenu(k("enter"))
-	m.sshDirInput.SetValue("/tmp/other-ssh")
+	m.sshDirInput.SetValue(dir)
 	_, cmd := m.update(k("enter"))
 	msg, ok := runCmd(cmd).(settingsSSHDirChangedMsg)
-	if !ok || msg.sshDir != "/tmp/other-ssh" {
+	if !ok || msg.sshDir != dir {
 		t.Fatalf("expected SSH-dir-changed msg; got %#v", runCmd(cmd))
+	}
+}
+
+// A nonexistent path must be rejected in the form and must NOT emit a
+// dir-changed message — otherwise the key list would be blanked and a bad
+// path persisted to prefs.
+func TestSettings_SSHDirNonexistentRejected(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope")
+	m := newSettingsModel("master.key", "/ssh", "/vault")
+	m, _ = m.updateMenu(k("down"))
+	m, _ = m.updateMenu(k("enter"))
+	m.sshDirInput.SetValue(missing)
+	m2, cmd := m.update(k("enter"))
+	if m2.formErr == nil {
+		t.Fatal("expected form error for nonexistent SSH dir")
+	}
+	if msg := runCmd(cmd); msg != nil {
+		t.Fatalf("nonexistent dir must not emit a message; got %#v", msg)
+	}
+}
+
+// A path that exists but is a file (not a directory) must also be rejected.
+func TestSettings_SSHDirNotADirectoryRejected(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(file, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := newSettingsModel("master.key", "/ssh", "/vault")
+	m, _ = m.updateMenu(k("down"))
+	m, _ = m.updateMenu(k("enter"))
+	m.sshDirInput.SetValue(file)
+	m2, cmd := m.update(k("enter"))
+	if m2.formErr == nil || !strings.Contains(m2.formErr.Error(), "not a directory") {
+		t.Fatalf("expected not-a-directory error; got %v", m2.formErr)
+	}
+	if msg := runCmd(cmd); msg != nil {
+		t.Fatalf("file path must not emit a message; got %#v", msg)
+	}
+}
+
+// When a reload scan fails, the model must keep the existing keys and surface
+// the error rather than blanking the list.
+func TestModel_KeysReloadedErrorKeepsList(t *testing.T) {
+	existing := []keys.Key{{PrivateKeyPath: "/ssh/id_ed25519", Algorithm: "ssh-ed25519"}}
+	m := Model{active: ScreenKeys, keys: existing, sshDir: "/ssh"}
+
+	next, _ := m.Update(keysReloadedMsg{sshDir: "/bad", err: os.ErrNotExist})
+	m = next.(Model)
+
+	if len(m.keys) != 1 || m.keys[0].PrivateKeyPath != "/ssh/id_ed25519" {
+		t.Fatalf("keys were altered on reload error: %#v", m.keys)
+	}
+	if m.err == nil {
+		t.Fatal("expected m.err to be set on reload error")
+	}
+	if m.sshDir != "/ssh" {
+		t.Fatalf("sshDir must not change on reload error; got %q", m.sshDir)
 	}
 }
 

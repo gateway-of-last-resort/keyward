@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -203,6 +204,17 @@ func (m settingsModel) updateEditSSHDir(msg tea.KeyMsg) (settingsModel, tea.Cmd)
 		newDir := strings.TrimSpace(m.sshDirInput.Value())
 		if newDir == "" {
 			m.formErr = fmt.Errorf("SSH directory must not be empty")
+			return m, nil
+		}
+		// Validate before committing: an unreadable or non-directory path
+		// must not blank the key list or get persisted to prefs.
+		info, err := os.Stat(newDir)
+		if err != nil {
+			m.formErr = fmt.Errorf("cannot use directory: %w", err)
+			return m, nil
+		}
+		if !info.IsDir() {
+			m.formErr = fmt.Errorf("not a directory: %s", newDir)
 			return m, nil
 		}
 		m.sshDir = newDir
