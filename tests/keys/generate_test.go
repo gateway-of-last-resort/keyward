@@ -20,6 +20,42 @@ func generateOpts(dir, filename string) keys.GenerateOptions {
 	}
 }
 
+// A symlink planted where a key would be created must never be written through:
+// generation must refuse it, and the symlink's target must stay untouched.
+func TestGenerate_RefusesSymlinkTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	dir := t.TempDir()
+
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "id_ed25519")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := keys.GenerateKeys(dir, generateOpts(dir, "id_ed25519")); err == nil {
+		t.Error("generation should fail when a symlink sits at the key path (no overwrite)")
+	}
+
+	over := generateOpts(dir, "id_ed25519")
+	over.Overwrite = true
+	if _, err := keys.GenerateKeys(dir, over); err == nil {
+		t.Error("generation should refuse a symlink even with overwrite")
+	}
+
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original" {
+		t.Errorf("victim file was written through the symlink: %q", got)
+	}
+}
+
 // ── algorithm & validation ───────────────────────────────────────────────────
 
 func TestGenerate_Ed25519(t *testing.T) {
