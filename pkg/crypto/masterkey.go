@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -27,6 +28,10 @@ var (
 const (
 	magic          = "SSHV"
 	versionV1 byte = 0x01
+	// versionV2 authenticates the file header (magic, version, argon2 params,
+	// salt, nonce) as AEAD associated data, so tampering with the KDF parameters
+	// is detected on decrypt instead of silently changing the derived key.
+	versionV2 byte = 0x02
 
 	argon2idTime    uint32 = 3
 	argon2idMemory  uint32 = 64 * 1024 // в KiB
@@ -61,20 +66,17 @@ func writeMasterKey(path string, identity *age.X25519Identity, password string) 
 		return ErrEncryptFailed
 	}
 
-	encrypted := cipher.Seal(nil, nonce, []byte(identity.String()), nil)
+	// The header (magic, version, argon2 params, salt, nonce) is authenticated as
+	// AEAD associated data, so it can't be altered independently of the ciphertext.
+	header := buildHeader(versionV2, argon2idTime, argon2idMemory, argon2idThreads, salt, nonce)
+	encrypted := cipher.Seal(nil, nonce, []byte(identity.String()), header)
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), "master.key.tmp*")
 	if err != nil {
 		return err
 	}
 	writes := []func() error{
-		func() error { return binary.Write(tmp, binary.BigEndian, []byte(magic)) },
-		func() error { return binary.Write(tmp, binary.BigEndian, versionV1) },
-		func() error { return binary.Write(tmp, binary.BigEndian, argon2idTime) },
-		func() error { return binary.Write(tmp, binary.BigEndian, argon2idMemory) },
-		func() error { return binary.Write(tmp, binary.BigEndian, argon2idThreads) },
-		func() error { return binary.Write(tmp, binary.BigEndian, salt) },
-		func() error { return binary.Write(tmp, binary.BigEndian, nonce) },
+		func() error { return binary.Write(tmp, binary.BigEndian, header) },
 		func() error { return binary.Write(tmp, binary.BigEndian, encrypted) },
 	}
 
@@ -110,6 +112,22 @@ func writeMasterKey(path string, identity *age.X25519Identity, password string) 
 
 	// fsync the directory so the rename itself is durable.
 	return syncDir(filepath.Dir(path))
+}
+
+// buildHeader serialises the fixed-size master-key header exactly as it is laid
+// out on disk: magic, version, argon2 time/memory/threads, salt, nonce. For v2
+// files this same byte slice is passed as the AEAD associated data. Writes to a
+// bytes.Buffer never fail, so their errors are intentionally ignored.
+func buildHeader(version byte, time, memory uint32, threads byte, salt, nonce []byte) []byte {
+	buf := new(bytes.Buffer)
+	buf.WriteString(magic)
+	buf.WriteByte(version)
+	_ = binary.Write(buf, binary.BigEndian, time)
+	_ = binary.Write(buf, binary.BigEndian, memory)
+	buf.WriteByte(threads)
+	buf.Write(salt)
+	buf.Write(nonce)
+	return buf.Bytes()
 }
 
 // syncDir fsyncs a directory so an entry rename/create within it survives a crash.
@@ -180,7 +198,8 @@ func LoadMasterKey(path, password string) (age.Identity, error) {
 	}
 	pos += 4
 
-	if data[pos] != versionV1 {
+	version := data[pos]
+	if version != versionV1 && version != versionV2 {
 		return nil, ErrUnsupportedVersion
 	}
 	pos++
@@ -214,7 +233,14 @@ func LoadMasterKey(path, password string) (age.Identity, error) {
 		return nil, ErrCorruptedMasterKey
 	}
 
-	decrypted, err := cipher.Open(nil, nonce, encrypted, nil)
+	// v2 authenticates the header (data[:pos]) as associated data; v1 predates
+	// that and passes nil, matching how it was written.
+	var aad []byte
+	if version == versionV2 {
+		aad = data[:pos]
+	}
+
+	decrypted, err := cipher.Open(nil, nonce, encrypted, aad)
 	if err != nil {
 		return nil, ErrWrongPassword
 	}
@@ -223,6 +249,13 @@ func LoadMasterKey(path, password string) (age.Identity, error) {
 	identity, err := age.ParseX25519Identity(string(decrypted))
 	if err != nil {
 		return nil, ErrCorruptedMasterKey
+	}
+
+	// Transparently upgrade a legacy v1 file to the authenticated v2 format on
+	// first successful unlock. Best-effort: a migration failure must not fail the
+	// unlock, so the error is ignored and the still-valid v1 file keeps working.
+	if version == versionV1 {
+		_ = writeMasterKey(path, identity, password)
 	}
 
 	return identity, nil

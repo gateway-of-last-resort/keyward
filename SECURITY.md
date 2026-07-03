@@ -71,7 +71,10 @@ The master key protects everything else, so its construction matters:
    with **argon2id** — parameters: time = 3, memory = 64 MiB, threads = 4,
    32-byte output, with a random 32-byte salt.
 3. **Identity encryption.** The age identity is encrypted with
-   **ChaCha20-Poly1305** (AEAD) using the KEK and a random 12-byte nonce.
+   **ChaCha20-Poly1305** (AEAD) using the KEK and a random 12-byte nonce. The
+   file header — including the argon2 parameters and salt — is bound to the
+   ciphertext as AEAD associated data, so tampering with the stored KDF
+   parameters is detected on unlock instead of silently deriving a different key.
 4. **Data encryption.** Metadata JSON and backup archives are encrypted to the
    age identity (X25519 + ChaCha20-Poly1305 via the age format).
 
@@ -79,7 +82,7 @@ The master key protects everything else, so its construction matters:
 
 ```
 "SSHV"            4-byte magic
-version           1 byte (0x01)
+version           1 byte (0x02)
 argon2 time       uint32, big-endian
 argon2 memory     uint32, big-endian (KiB)
 argon2 threads    1 byte
@@ -90,6 +93,11 @@ ciphertext        encrypted age identity (+ Poly1305 tag)
 
 The argon2 parameters are stored in the file, so existing vaults keep working if
 defaults change in a future release.
+
+**Format versions.** v1 files had the same layout but did not authenticate the
+header. v2 (current) binds the header bytes above as AEAD associated data. A v1
+file is read transparently and rewritten in place as v2 on the next successful
+unlock, so no manual migration is needed.
 
 ## Local file-handling guarantees
 

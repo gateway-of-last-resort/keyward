@@ -1,6 +1,9 @@
 package crypto_test
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,7 +11,56 @@ import (
 
 	"filippo.io/age"
 	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
+	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/chacha20poly1305"
 )
+
+// versionByte returns the format version byte (offset 4) of the key file.
+func versionByte(t *testing.T, path string) byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read key: %v", err)
+	}
+	if len(data) < 5 {
+		t.Fatalf("key file too short: %d bytes", len(data))
+	}
+	return data[4]
+}
+
+// writeLegacyV1 hand-writes a v1-format master.key (unauthenticated header, no
+// AAD) so migration can be tested — the public API only ever writes v2 now.
+func writeLegacyV1(t *testing.T, path, password string, id *age.X25519Identity) {
+	t.Helper()
+	salt := make([]byte, 32)
+	nonce := make([]byte, 12)
+	if _, err := rand.Read(salt); err != nil {
+		t.Fatalf("rand salt: %v", err)
+	}
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatalf("rand nonce: %v", err)
+	}
+	kek := argon2.IDKey([]byte(password), salt, 3, 64*1024, 4, 32)
+	cipher, err := chacha20poly1305.New(kek)
+	if err != nil {
+		t.Fatalf("cipher: %v", err)
+	}
+	encrypted := cipher.Seal(nil, nonce, []byte(id.String()), nil)
+
+	buf := new(bytes.Buffer)
+	buf.WriteString("SSHV")
+	buf.WriteByte(0x01)
+	_ = binary.Write(buf, binary.BigEndian, uint32(3))
+	_ = binary.Write(buf, binary.BigEndian, uint32(64*1024))
+	buf.WriteByte(4)
+	buf.Write(salt)
+	buf.Write(nonce)
+	buf.Write(encrypted)
+
+	if err := os.WriteFile(path, buf.Bytes(), 0600); err != nil {
+		t.Fatalf("write legacy key: %v", err)
+	}
+}
 
 // keyPath returns a fresh master.key path inside a temp dir.
 func keyPath(t *testing.T) string {
@@ -180,6 +232,52 @@ func TestLoadMasterKey_Corrupt(t *testing.T) {
 				t.Fatalf("got %v, want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestInitMasterKey_WritesV2(t *testing.T) {
+	path := initKey(t, "pw")
+	if v := versionByte(t, path); v != 0x02 {
+		t.Fatalf("new key version %#x, want 0x02", v)
+	}
+}
+
+func TestLoadMasterKey_MigratesV1ToV2(t *testing.T) {
+	path := keyPath(t)
+	id := newIdentity(t)
+	writeLegacyV1(t, path, "pw", id)
+
+	if v := versionByte(t, path); v != 0x01 {
+		t.Fatalf("pre-load version %#x, want 0x01", v)
+	}
+
+	loaded, err := crypto.LoadMasterKey(path, "pw")
+	if err != nil {
+		t.Fatalf("load v1: %v", err)
+	}
+	if loaded.(*age.X25519Identity).String() != id.String() {
+		t.Fatal("migrated identity differs from original")
+	}
+
+	// First successful unlock must have rewritten the file in place as v2.
+	if v := versionByte(t, path); v != 0x02 {
+		t.Fatalf("post-load version %#x, want 0x02 (auto-migrated)", v)
+	}
+	// And the migrated file still unlocks (now via the v2 AAD path).
+	if _, err := crypto.LoadMasterKey(path, "pw"); err != nil {
+		t.Fatalf("reload migrated v2: %v", err)
+	}
+}
+
+// TestLoadMasterKey_V2ParamTamper flips a byte of the authenticated argon2
+// header; the load must fail rather than derive a key under altered parameters.
+func TestLoadMasterKey_V2ParamTamper(t *testing.T) {
+	path := initKey(t, "pw")
+	// b[12] is the low byte of argon2 memory: changing it by one keeps the KDF
+	// cost sane while tampering with an authenticated parameter.
+	corrupt(t, path, func(b []byte) []byte { b[12] ^= 0x01; return b })
+	if _, err := crypto.LoadMasterKey(path, "pw"); !errors.Is(err, crypto.ErrWrongPassword) {
+		t.Fatalf("got %v, want ErrWrongPassword", err)
 	}
 }
 
