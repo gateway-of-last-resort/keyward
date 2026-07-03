@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -80,7 +81,11 @@ func WriteAtomic(path string, data []byte) error {
 		return err
 	}
 
-	// fsync the directory so the rename itself is durable.
+	// fsync the directory so the rename itself is durable. Windows has no
+	// directory fsync (Open+Sync returns "Access is denied"), so skip it there.
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return err

@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // atomicWriteFile durably writes data to path: it creates a temp file in the
@@ -48,7 +49,12 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 }
 
 // syncDir fsyncs a directory so that an entry rename/create within it is durable.
+// Windows has no directory fsync — opening a directory and calling Sync returns
+// "Access is denied" — so it's skipped there; the rename is still atomic.
 func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return err

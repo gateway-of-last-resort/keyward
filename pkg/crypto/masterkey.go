@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"filippo.io/age"
 	"golang.org/x/crypto/argon2"
@@ -112,7 +113,12 @@ func writeMasterKey(path string, identity *age.X25519Identity, password string) 
 }
 
 // syncDir fsyncs a directory so an entry rename/create within it survives a crash.
+// Windows has no directory fsync (Open+Sync returns "Access is denied"), so it's
+// skipped there; the rename is still atomic.
 func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
