@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,7 +48,7 @@ func main() {
 	cfgPath := filepath.Join(sshDir, "config")
 
 	allKeys, err := keys.Parse(sshDir)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !errors.Is(err, keys.ErrDirNotFound) {
 		fatal(err)
 	}
 

@@ -43,7 +43,9 @@ func Parse(path string) ([]Key, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w: %s", ErrDirNotFound, path)
+			// Wrap the original error so errors.Is(err, fs.ErrNotExist) also
+			// holds for callers; the message still carries the path.
+			return nil, fmt.Errorf("%w: %w", ErrDirNotFound, err)
 		}
 		return nil, fmt.Errorf("%w: %w", ErrReadDirFailed, err)
 	}
