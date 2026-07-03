@@ -85,6 +85,14 @@ func writeMasterKey(path string, identity *age.X25519Identity, password string) 
 		}
 	}
 
+	// fsync the data before the rename so a crash can't leave master.key
+	// renamed into place but zero-length or truncated.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return fmt.Errorf("%w: %w", ErrWriteFailed, err)
+	}
+
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmp.Name())
 		return fmt.Errorf("%w: %w", ErrWriteFailed, err)
@@ -99,6 +107,20 @@ func writeMasterKey(path string, identity *age.X25519Identity, password string) 
 		return fmt.Errorf("%w: %w", ErrWriteFailed, err)
 	}
 
+	// fsync the directory so the rename itself is durable.
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir fsyncs a directory so an entry rename/create within it survives a crash.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		return fmt.Errorf("%w: %w", ErrWriteFailed, err)
+	}
 	return nil
 }
 

@@ -61,6 +61,13 @@ func WriteAtomic(path string, data []byte) error {
 		return err
 	}
 
+	// fsync the data before the rename so a crash can't leave the config
+	// renamed into place but truncated.
+	if err := tempFile.Sync(); err != nil {
+		tempFile.Close()
+		os.Remove(tempFile.Name())
+		return err
+	}
 	if err := tempFile.Close(); err != nil {
 		os.Remove(tempFile.Name())
 		return err
@@ -69,8 +76,17 @@ func WriteAtomic(path string, data []byte) error {
 		os.Remove(tempFile.Name())
 		return err
 	}
+	if err := os.Chmod(path, 0600); err != nil {
+		return err
+	}
 
-	return os.Chmod(path, 0600)
+	// fsync the directory so the rename itself is durable.
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func backup(path string) error {
