@@ -6,6 +6,17 @@ import (
 	"strings"
 )
 
+// hasKeyword reports whether the lowercased, trimmed line begins with keyword
+// followed by whitespace (space or tab). ssh_config(5) allows any whitespace
+// as the separator, so "Host\tgithub.com" is as valid as "Host github.com".
+func hasKeyword(lower, keyword string) bool {
+	if !strings.HasPrefix(lower, keyword) {
+		return false
+	}
+	rest := lower[len(keyword):]
+	return len(rest) > 0 && (rest[0] == ' ' || rest[0] == '\t')
+}
+
 func parseParam(raw string) Token {
 	var t Token
 	t.Type = PARAM
@@ -14,29 +25,30 @@ func parseParam(raw string) Token {
 	trimmed := strings.TrimSpace(t.Raw)
 
 	eqIdx := strings.Index(trimmed, "=")
-	spaceIdx := strings.Index(trimmed, " ")
+	// Any whitespace separates a key from its value, not just a literal space.
+	wsIdx := strings.IndexAny(trimmed, " \t")
 	var sepIdx int
 	var hasSep bool
 
 	switch {
-	case eqIdx == -1 && spaceIdx == -1:
+	case eqIdx == -1 && wsIdx == -1:
 		t.Key = trimmed
 		t.Sep = " "
 
 	case eqIdx == -1:
-		sepIdx, hasSep = spaceIdx, true
+		sepIdx, hasSep = wsIdx, true
 		t.Sep = " "
 
-	case spaceIdx == -1:
+	case wsIdx == -1:
 		sepIdx, hasSep = eqIdx, true
 		t.Sep = "="
 
-	case eqIdx < spaceIdx:
+	case eqIdx < wsIdx:
 		sepIdx, hasSep = eqIdx, true
 		t.Sep = "="
 
 	default:
-		sepIdx, hasSep = spaceIdx, true
+		sepIdx, hasSep = wsIdx, true
 		t.Sep = " "
 	}
 
@@ -66,16 +78,16 @@ func tokenize(data []byte) []Token {
 			tokens[i].Type = COMMENT
 		} else {
 			lower := strings.ToLower(trimmed)
-			if strings.HasPrefix(lower, "host ") {
-				value := strings.TrimSpace(trimmed[5:])
+			if hasKeyword(lower, "host") {
+				value := strings.TrimSpace(trimmed[len("host"):])
 				tokens[i].Type = HOST
-				tokens[i].Key = trimmed[:4]
+				tokens[i].Key = trimmed[:len("host")]
 				tokens[i].Value = value
 				tokens[i].Sep = " "
-			} else if strings.HasPrefix(lower, "match ") {
-				value := strings.TrimSpace(trimmed[6:])
+			} else if hasKeyword(lower, "match") {
+				value := strings.TrimSpace(trimmed[len("match"):])
 				tokens[i].Type = MATCH
-				tokens[i].Key = trimmed[:5]
+				tokens[i].Key = trimmed[:len("match")]
 				tokens[i].Value = value
 				tokens[i].Sep = " "
 			} else {
