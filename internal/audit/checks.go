@@ -36,6 +36,25 @@ func expandPath(path string) string {
 func checkPassphrase(key keys.Key) []AuditResult {
 
 	var results []AuditResult
+
+	// A public-only key legitimately has no private half — nothing to check.
+	if key.IsPublicOnly {
+		return results
+	}
+
+	// Not public-only, yet keys.Parse produced no usable private path: it saw a
+	// private file it couldn't recognise (junk/BOM before -----BEGIN). Don't
+	// stay silent — surface it.
+	if key.PrivateKeyPath == "" {
+		return append(results, AuditResult{
+			KeyPath:  resolveKeyPath(key),
+			Severity: Warning,
+			Category: CategoryKey,
+			Message:  "Private key present but not recognized",
+			Fix:      "Ensure the key is valid PEM with no data before -----BEGIN",
+		})
+	}
+
 	if key.PrivateKeyPath != "" {
 		if data, err := os.ReadFile(key.PrivateKeyPath); err != nil {
 			results = append(results, AuditResult{

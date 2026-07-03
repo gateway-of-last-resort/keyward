@@ -136,6 +136,21 @@ func TestCheckPassphrase_PublicOnly_NoFinding(t *testing.T) {
 	}
 }
 
+// A key that is not public-only but has no recognized private path (junk before
+// the PEM header) must not be silently skipped.
+func TestCheckPassphrase_UnrecognizedPrivate_Warning(t *testing.T) {
+	k := baseKey(t)
+	k.PrivateKeyPath = ""  // parse couldn't recognize the private half
+	k.IsPublicOnly = false // but it's not a public-only key
+
+	results := checkPassphrase(k)
+
+	if !hasSeverity(results, Warning) {
+		t.Error("unrecognized private key should produce a Warning, not silence")
+	}
+	allHaveFix(t, results)
+}
+
 func TestCheckPassphrase_MissingFile_Warning(t *testing.T) {
 	k := baseKey(t)
 	k.PrivateKeyPath = "/nonexistent/id_ed25519"
