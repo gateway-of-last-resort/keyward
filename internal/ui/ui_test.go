@@ -437,6 +437,29 @@ func loadConfig(t *testing.T) (*config.Config, string) {
 	return &c, dir
 }
 
+// A successful save must clear a saveErr left by an earlier failure, otherwise
+// the "✓ saved" message renders in the error style.
+func TestConfig_SaveClearsPriorError(t *testing.T) {
+	cfg, dir := loadConfig(t)
+	m := newConfigModel(cfg, dir)
+	m, _ = m.update(k("a")) // add a host so the config is modified
+	m, _ = m.update(k("staging"))
+	m, _ = m.update(k("enter"))
+	if !m.cfg.Modified {
+		t.Fatal("expected modified config")
+	}
+
+	m.saveErr = os.ErrInvalid // simulate a prior failed save
+	m, _ = m.update(k("s"))
+
+	if m.saveErr != nil {
+		t.Fatalf("saveErr should be cleared after a successful save; got %v", m.saveErr)
+	}
+	if !strings.Contains(m.saveMsg, "saved") {
+		t.Fatalf("saveMsg = %q, want a success message", m.saveMsg)
+	}
+}
+
 func TestConfig_AddHost(t *testing.T) { // §8.4
 	cfg, dir := loadConfig(t)
 	m := newConfigModel(cfg, dir)

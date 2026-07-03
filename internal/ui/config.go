@@ -283,6 +283,7 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 					m.saveErr = err
 					m.saveMsg = "✗  save failed: " + err.Error()
 				} else {
+					m.saveErr = nil
 					m.saveMsg = "✓  saved"
 					m.saved = true
 				}
@@ -438,6 +439,7 @@ func (m configModel) createConfig() (configModel, tea.Cmd) {
 		return m, nil
 	}
 	m.cfg = &c
+	m.saveErr = nil
 	m.saveMsg = "✓  created " + cfgPath
 	return m, nil
 }
