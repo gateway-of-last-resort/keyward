@@ -25,30 +25,54 @@ func Init(dir string) error {
 		if err := os.MkdirAll(d, 0700); err != nil {
 			return err
 		}
+		// MkdirAll leaves an already-existing directory's mode untouched, so a
+		// vault created earlier under a lax umask (or by hand) could stay
+		// group/world-readable. Force 0700 — this is the one place vault dir
+		// permissions are set.
+		if err := os.Chmod(d, 0700); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
 // Load decrypts and deserialises the metadata store from dir.
-// Returns an empty Store if no metadata file exists yet.
+// Returns an empty Store if no metadata file exists yet. If the primary file is
+// missing OR present-but-corrupt (undecryptable / unparseable), it recovers from
+// the .bak left by a mid-write crash and promotes it to the primary path.
 func Load(dir string, identity age.Identity) (Store, error) {
 
 	metaPath := filepath.Join(dir, metadataFile)
 	bakPath := metaPath + ".bak"
 
-	if _, err := os.Stat(metaPath); errors.Is(err, os.ErrNotExist) {
-		if _, err := os.Stat(bakPath); err == nil {
-			if err := os.Rename(bakPath, metaPath); err != nil {
-				return Store{}, fmt.Errorf("metadata recovery failed: %w", err)
-			}
-		}
+	s, err := readStore(metaPath, identity)
+	if err == nil {
+		return s, nil
 	}
 
-	data, err := os.ReadFile(metaPath)
+	// Primary is unusable. Fall back to the backup, whether the primary was
+	// missing or corrupt. Only promote the backup if it actually loads.
+	if bs, bakErr := readStore(bakPath, identity); bakErr == nil {
+		if rnErr := os.Rename(bakPath, metaPath); rnErr != nil {
+			return Store{}, fmt.Errorf("metadata recovery failed: %w", rnErr)
+		}
+		_ = syncDir(dir)
+		return bs, nil
+	}
+
+	// No usable backup. A missing primary with no backup is a fresh, empty
+	// vault; anything else surfaces the primary's error.
 	if errors.Is(err, os.ErrNotExist) {
 		return Store{Keys: make(map[string]KeyMetadata)}, nil
-	} else if err != nil {
+	}
+	return Store{}, err
+}
+
+// readStore reads, decrypts, and unmarshals a single metadata file.
+func readStore(path string, identity age.Identity) (Store, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return Store{}, err
 	}
 
@@ -66,14 +90,17 @@ func Load(dir string, identity age.Identity) (Store, error) {
 		s.Keys = make(map[string]KeyMetadata)
 	}
 	return s, nil
-
 }
 
 // Save encrypts and atomically writes the store to dir/metadata.age.
 func Save(s *Store, dir string, identity age.Identity) error {
 
-	s.SavedAt = time.Now()
-	plaintext, err := json.Marshal(s)
+	// Marshal a copy stamped with SavedAt; commit the timestamp to the caller's
+	// store only after the write succeeds, so a failed Save never leaves the
+	// in-memory store claiming a save time that never reached disk.
+	saved := *s
+	saved.SavedAt = time.Now()
+	plaintext, err := json.Marshal(&saved)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrCorrupted, err)
 	}
@@ -91,40 +118,25 @@ func Save(s *Store, dir string, identity age.Identity) error {
 	}
 
 	metaPath := filepath.Join(dir, metadataFile)
-	if err := os.Rename(metaPath, metaPath+".bak"); err != nil && !errors.Is(err, os.ErrNotExist) {
+	bakPath := metaPath + ".bak"
+
+	// Move the current file aside so any failure can roll it back.
+	if err := os.Rename(metaPath, bakPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("%w: %w", ErrWriteFailed, err)
 	}
 
-	tmp, err := os.CreateTemp(dir, "temp*")
-	if err != nil {
+	if err := atomicWriteFile(metaPath, ciphertext, 0600); err != nil {
+		// Restore the previous file on any write failure (no-op if none existed).
+		if rbErr := os.Rename(bakPath, metaPath); rbErr != nil && !errors.Is(rbErr, os.ErrNotExist) {
+			return errors.Join(ErrWriteFailed, err, rbErr)
+		}
 		return fmt.Errorf("%w: %w", ErrWriteFailed, err)
 	}
 
-	_, err = tmp.Write(ciphertext)
-	if err != nil {
-		delErr := os.Remove(tmp.Name())
-		return errors.Join(ErrWriteFailed, err, delErr)
-	}
-
-	err = tmp.Close()
-	if err != nil {
-		rollbackErr := os.Rename(metaPath+".bak", metaPath)
-		delErr := os.Remove(tmp.Name())
-		return errors.Join(ErrWriteFailed, err, delErr, rollbackErr)
-	}
-	err = os.Rename(tmp.Name(), metaPath)
-	if err != nil {
-		rollbackErr := os.Rename(metaPath+".bak", metaPath)
-		return errors.Join(ErrWriteFailed, err, rollbackErr)
-	}
-
-	err = os.Chmod(metaPath, 0600)
-	if err != nil {
-		rollbackErr := os.Rename(metaPath+".bak", metaPath)
-		return errors.Join(ErrWriteFailed, err, rollbackErr)
-	}
-
-	os.Remove(metaPath + ".bak")
+	// The new file is durably on disk (atomicWriteFile fsynced it and the
+	// directory), so it is now safe to drop the backup and commit SavedAt.
+	os.Remove(bakPath)
+	s.SavedAt = saved.SavedAt
 	return nil
 }
 

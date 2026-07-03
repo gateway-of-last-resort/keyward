@@ -282,6 +282,33 @@ func TestGenerate_RSALabelChanges(t *testing.T) { // §7.2
 	}
 }
 
+// generateResult drives the async generation: it runs the batch that submit()
+// returns and extracts the generateResultMsg produced by the generation cmd.
+func generateResult(t *testing.T, cmd tea.Cmd) generateResultMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("submit returned a nil command")
+	}
+	msg := cmd()
+	if r, ok := msg.(generateResultMsg); ok {
+		return r
+	}
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected batch or generateResultMsg, got %T", msg)
+	}
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		if r, ok := c().(generateResultMsg); ok {
+			return r
+		}
+	}
+	t.Fatal("no generateResultMsg in batch")
+	return generateResultMsg{}
+}
+
 func TestGenerate_Ed25519Creates(t *testing.T) { // §7.8
 	dir := t.TempDir()
 	m := newGenerateModel(dir)
@@ -297,6 +324,14 @@ func TestGenerate_Ed25519Creates(t *testing.T) { // §7.8
 	got, cmd := m.submit()
 	if got.formErr != nil {
 		t.Fatalf("generate failed: %v", got.formErr)
+	}
+	if !got.submitting {
+		t.Fatal("submit should mark the model as submitting")
+	}
+	// Feed the async result back into the model; success emits keyGeneratedMsg.
+	got, cmd = got.update(generateResult(t, cmd))
+	if got.submitting {
+		t.Fatal("submitting should be cleared after the result arrives")
 	}
 	msg, ok := runCmd(cmd).(keyGeneratedMsg)
 	if !ok {
@@ -324,12 +359,15 @@ func TestGenerate_RSABitSizeNotLeakedToComment(t *testing.T) {
 	if got.formErr != nil {
 		t.Fatalf("generate failed: %v", got.formErr)
 	}
-	msg := runCmd(cmd).(keyGeneratedMsg)
-	if msg.key.BitSize != 4096 {
-		t.Fatalf("bit size = %d, want 4096", msg.key.BitSize)
+	res := generateResult(t, cmd)
+	if res.err != nil {
+		t.Fatalf("generate failed: %v", res.err)
 	}
-	if msg.key.Comment != "" {
-		t.Fatalf("comment should be empty (number must not leak); got %q", msg.key.Comment)
+	if res.key.BitSize != 4096 {
+		t.Fatalf("bit size = %d, want 4096", res.key.BitSize)
+	}
+	if res.key.Comment != "" {
+		t.Fatalf("comment should be empty (number must not leak); got %q", res.key.Comment)
 	}
 }
 
@@ -340,7 +378,8 @@ func TestGenerate_RSABitSizeTooSmall(t *testing.T) { // §7.10
 	m = genType(m, inComment+1, "1024")
 	m = genType(m, inPass+1, "secret")
 	m = genType(m, inPassConf+1, "secret")
-	got, _ := m.submit()
+	got, cmd := m.submit()
+	got, _ = got.update(generateResult(t, cmd))
 	if got.formErr == nil || !strings.Contains(got.formErr.Error(), "at least 2048") {
 		t.Fatalf("expected bit-size error; got %v", got.formErr)
 	}
@@ -359,7 +398,8 @@ func TestGenerate_DuplicateFilename(t *testing.T) { // §7.11
 		m = m.moveFocus(1)
 	}
 	m = m.toggleCurrent(" ") // allow empty
-	got, _ := m.submit()
+	got, cmd := m.submit()
+	got, _ = got.update(generateResult(t, cmd))
 	if got.formErr == nil || !strings.Contains(got.formErr.Error(), "already exists") {
 		t.Fatalf("expected already-exists error; got %v", got.formErr)
 	}
@@ -395,6 +435,29 @@ func loadConfig(t *testing.T) (*config.Config, string) {
 		t.Fatal(err)
 	}
 	return &c, dir
+}
+
+// A successful save must clear a saveErr left by an earlier failure, otherwise
+// the "✓ saved" message renders in the error style.
+func TestConfig_SaveClearsPriorError(t *testing.T) {
+	cfg, dir := loadConfig(t)
+	m := newConfigModel(cfg, dir)
+	m, _ = m.update(k("a")) // add a host so the config is modified
+	m, _ = m.update(k("staging"))
+	m, _ = m.update(k("enter"))
+	if !m.cfg.Modified {
+		t.Fatal("expected modified config")
+	}
+
+	m.saveErr = os.ErrInvalid // simulate a prior failed save
+	m, _ = m.update(k("s"))
+
+	if m.saveErr != nil {
+		t.Fatalf("saveErr should be cleared after a successful save; got %v", m.saveErr)
+	}
+	if !strings.Contains(m.saveMsg, "saved") {
+		t.Fatalf("saveMsg = %q, want a success message", m.saveMsg)
+	}
 }
 
 func TestConfig_AddHost(t *testing.T) { // §8.4
@@ -540,6 +603,47 @@ func TestBackup_RestoreBounds(t *testing.T) {
 	}
 }
 
+// Restore must not touch ~/.ssh without an explicit confirmation. A valid
+// selection lands on stepConfirm; only "y" proceeds, anything else cancels.
+func TestBackup_RestoreRequiresConfirmation(t *testing.T) {
+	vaultDir := t.TempDir()
+	backupsDir := filepath.Join(vaultDir, "backups")
+	if err := writeDummyBackups(backupsDir, "a.tar.age", "b.tar.age"); err != nil {
+		t.Fatal(err)
+	}
+	m := newBackupModel(t.TempDir(), vaultDir, nil)
+	m, _ = m.update(k("r"))
+	m.confirmInput.SetValue("1")
+	m, cmd := m.update(k("enter"))
+
+	// Selecting a backup must NOT immediately restore — it asks to confirm.
+	if m.promptStep != stepConfirm {
+		t.Fatalf("expected stepConfirm after selection; got %v", m.promptStep)
+	}
+	if cmd != nil {
+		t.Fatalf("no command should run before confirmation; got %#v", runCmd(cmd))
+	}
+	if m.restoreTarget == "" {
+		t.Fatal("restoreTarget should hold the chosen backup path")
+	}
+
+	// A non-y key cancels back to the menu without restoring.
+	cancelled, cmd := m.update(k("n"))
+	if cancelled.promptStep != stepIdle {
+		t.Fatalf("n should cancel to stepIdle; got %v", cancelled.promptStep)
+	}
+	if cmd != nil {
+		t.Fatalf("cancel must not run a command; got %#v", runCmd(cmd))
+	}
+
+	// "y" with a locked vault (identity nil) proceeds to the password prompt,
+	// not straight into RestoreBackup.
+	confirmed, _ := m.update(k("y"))
+	if confirmed.promptStep != stepPasswd {
+		t.Fatalf("y with locked vault should go to stepPasswd; got %v", confirmed.promptStep)
+	}
+}
+
 // ── §10 settings ────────────────────────────────────────────────────────────
 
 func enterChangePass(m settingsModel) settingsModel {
@@ -589,14 +693,72 @@ func TestSettings_SSHDirEmpty(t *testing.T) { // §10.10
 }
 
 func TestSettings_SSHDirChangeEmitsMsg(t *testing.T) { // §10.9
+	dir := t.TempDir() // must be a real, existing directory to pass validation
 	m := newSettingsModel("master.key", "/ssh", "/vault")
 	m, _ = m.updateMenu(k("down"))
 	m, _ = m.updateMenu(k("enter"))
-	m.sshDirInput.SetValue("/tmp/other-ssh")
+	m.sshDirInput.SetValue(dir)
 	_, cmd := m.update(k("enter"))
 	msg, ok := runCmd(cmd).(settingsSSHDirChangedMsg)
-	if !ok || msg.sshDir != "/tmp/other-ssh" {
+	if !ok || msg.sshDir != dir {
 		t.Fatalf("expected SSH-dir-changed msg; got %#v", runCmd(cmd))
+	}
+}
+
+// A nonexistent path must be rejected in the form and must NOT emit a
+// dir-changed message — otherwise the key list would be blanked and a bad
+// path persisted to prefs.
+func TestSettings_SSHDirNonexistentRejected(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope")
+	m := newSettingsModel("master.key", "/ssh", "/vault")
+	m, _ = m.updateMenu(k("down"))
+	m, _ = m.updateMenu(k("enter"))
+	m.sshDirInput.SetValue(missing)
+	m2, cmd := m.update(k("enter"))
+	if m2.formErr == nil {
+		t.Fatal("expected form error for nonexistent SSH dir")
+	}
+	if msg := runCmd(cmd); msg != nil {
+		t.Fatalf("nonexistent dir must not emit a message; got %#v", msg)
+	}
+}
+
+// A path that exists but is a file (not a directory) must also be rejected.
+func TestSettings_SSHDirNotADirectoryRejected(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(file, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := newSettingsModel("master.key", "/ssh", "/vault")
+	m, _ = m.updateMenu(k("down"))
+	m, _ = m.updateMenu(k("enter"))
+	m.sshDirInput.SetValue(file)
+	m2, cmd := m.update(k("enter"))
+	if m2.formErr == nil || !strings.Contains(m2.formErr.Error(), "not a directory") {
+		t.Fatalf("expected not-a-directory error; got %v", m2.formErr)
+	}
+	if msg := runCmd(cmd); msg != nil {
+		t.Fatalf("file path must not emit a message; got %#v", msg)
+	}
+}
+
+// When a reload scan fails, the model must keep the existing keys and surface
+// the error rather than blanking the list.
+func TestModel_KeysReloadedErrorKeepsList(t *testing.T) {
+	existing := []keys.Key{{PrivateKeyPath: "/ssh/id_ed25519", Algorithm: "ssh-ed25519"}}
+	m := Model{active: ScreenKeys, keys: existing, sshDir: "/ssh"}
+
+	next, _ := m.Update(keysReloadedMsg{sshDir: "/bad", err: os.ErrNotExist})
+	m = next.(Model)
+
+	if len(m.keys) != 1 || m.keys[0].PrivateKeyPath != "/ssh/id_ed25519" {
+		t.Fatalf("keys were altered on reload error: %#v", m.keys)
+	}
+	if m.err == nil {
+		t.Fatal("expected m.err to be set on reload error")
+	}
+	if m.sshDir != "/ssh" {
+		t.Fatalf("sshDir must not change on reload error; got %q", m.sshDir)
 	}
 }
 

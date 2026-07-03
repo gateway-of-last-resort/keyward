@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
 var (
@@ -38,12 +40,15 @@ const (
 
 // GenerateOptions configures SSH key generation.
 type GenerateOptions struct {
-	Algorithm            Algorithm
-	Filename             string
-	Overwrite            bool
-	BitSize              int
-	Comment              string
-	Passphrase           string
+	Algorithm Algorithm
+	Filename  string
+	Overwrite bool
+	BitSize   int
+	Comment   string
+	// Passphrase is the private-key passphrase as raw bytes so it can be zeroed.
+	// GenerateKeys zeroes it (and any derived copy) before returning; callers
+	// must treat it as consumed.
+	Passphrase           []byte
 	AllowEmptyPassphrase bool
 }
 
@@ -57,13 +62,14 @@ func (a Algorithm) IsValid() bool {
 	}
 }
 
-// risks of passphrase exposure in core dumps or memory inspection tools.
-// TODO: change Passphrase field type from string to []byte in GenerateOptions,
-// then explicitly zero it after use: for i := range opts.Passphrase { opts.Passphrase[i] = 0 }
-
 // GenerateKeys creates a new SSH key pair in dir according to opts.
 // Ed25519 ignores BitSize; RSA defaults to 4096 when BitSize is 0.
+// The passphrase in opts is zeroed before returning.
 func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
+
+	// Zero the passphrase (and thus the caller's shared backing array) once
+	// we're done marshaling, limiting its lifetime in memory.
+	defer crypto.ZeroBytes(opts.Passphrase)
 
 	info, errDir := os.Stat(dir)
 	if errDir != nil {
@@ -84,7 +90,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		return Key{}, ErrMissingFilename
 	}
 
-	if opts.Passphrase == "" {
+	if len(opts.Passphrase) == 0 {
 		if !opts.AllowEmptyPassphrase {
 			return Key{}, ErrEmptyPassphrase
 		}
@@ -93,8 +99,10 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 	privatePath := filepath.Join(dir, opts.Filename)
 	publicPath := privatePath + ".pub"
 
-	_, errPriv := os.Stat(privatePath)
-	_, errPub := os.Stat(publicPath)
+	// Lstat (not Stat) so a symlink at the target counts as "exists" and is
+	// rejected rather than followed.
+	_, errPriv := os.Lstat(privatePath)
+	_, errPub := os.Lstat(publicPath)
 
 	if !errors.Is(errPriv, os.ErrNotExist) || !errors.Is(errPub, os.ErrNotExist) {
 		if !opts.Overwrite {
@@ -122,8 +130,8 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 
 		var privBlock *pem.Block
 
-		if opts.Passphrase != "" {
-			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(edPriv, opts.Comment, []byte(opts.Passphrase))
+		if len(opts.Passphrase) != 0 {
+			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(edPriv, opts.Comment, opts.Passphrase)
 		} else {
 			privBlock, err = ssh.MarshalPrivateKey(edPriv, opts.Comment)
 		}
@@ -158,8 +166,8 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 
 		var privBlock *pem.Block
 
-		if opts.Passphrase != "" {
-			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(rsaPriv, opts.Comment, []byte(opts.Passphrase))
+		if len(opts.Passphrase) != 0 {
+			privBlock, err = ssh.MarshalPrivateKeyWithPassphrase(rsaPriv, opts.Comment, opts.Passphrase)
 		} else {
 			privBlock, err = ssh.MarshalPrivateKey(rsaPriv, opts.Comment)
 		}
@@ -184,7 +192,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		pubPem = []byte(strings.TrimSpace(string(pubPem)) + " " + opts.Comment + "\n")
 	}
 
-	filePriv, err := os.OpenFile(privatePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	filePriv, err := openKeyFile(privatePath, opts.Overwrite, 0600)
 
 	if err != nil {
 		return Key{}, fmt.Errorf("%w: %s", ErrCreateFailed, privatePath)
@@ -207,7 +215,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, privatePath)
 	}
 
-	filePub, err := os.OpenFile(publicPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	filePub, err := openKeyFile(publicPath, opts.Overwrite, 0644)
 	if err != nil {
 		cleanup()
 		return Key{}, fmt.Errorf("%w: %s", ErrCreateFailed, publicPath)
@@ -228,7 +236,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 	return Key{
 		PrivateKeyPath: privatePath,
 		PublicKeyPath:  publicPath,
-		HasPassphrase:  opts.Passphrase != "",
+		HasPassphrase:  len(opts.Passphrase) != 0,
 		PrivatePerm:    0600,
 		PublicPerm:     0644,
 		Algorithm:      string(opts.Algorithm),
@@ -237,4 +245,20 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		BitSize:        bitSize,
 		Comment:        opts.Comment,
 	}, nil
+}
+
+// openKeyFile opens path for writing new key material without following a
+// final-component symlink. When overwrite is false it uses O_EXCL, which fails
+// if anything (including a symlink) already exists at path — closing the
+// symlink-follow and the Stat/Open TOCTOU window. When overwrite is true it
+// truncates an existing regular file but refuses a symlink via an explicit
+// Lstat plus O_NOFOLLOW so a race-planted link can't redirect the write.
+func openKeyFile(path string, overwrite bool, perm os.FileMode) (*os.File, error) {
+	if !overwrite {
+		return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	}
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%w: %s is a symlink", ErrCreateFailed, path)
+	}
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|oNoFollow, perm)
 }

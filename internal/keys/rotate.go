@@ -2,7 +2,7 @@ package keys
 
 import (
 	"errors"
-	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -15,9 +15,11 @@ var (
 
 // RotateKey replaces an existing key pair with a newly generated one.
 //
-// The old private and public key files are renamed to <name>.bak and
-// <name>.pub.bak before the new key is generated. If generation fails,
-// the renames are rolled back automatically.
+// It is crash-safe: the new pair is generated under temporary names first, so a
+// crash or a generation failure never touches the live key. Only once the new
+// pair is fully written is it moved into place with rename (which atomically
+// replaces the destination), and the old key is preserved as <name>.bak /
+// <name>.pub.bak. At no point does the private key vanish from its live name.
 //
 // The caller is responsible for recording the rotation date in storage
 // (via storage.Update setting KeyMetadata.LastRotatedAt).
@@ -27,28 +29,73 @@ func RotateKey(key Key, opts GenerateOptions) (newKey Key, bakPath string, err e
 	}
 
 	dir := filepath.Dir(key.PrivateKeyPath)
-	privBak := key.PrivateKeyPath + ".bak"
-	pubBak := key.PublicKeyPath + ".bak"
+	livePriv := key.PrivateKeyPath
+	livePub := key.PublicKeyPath
+	privBak := livePriv + ".bak"
+	pubBak := livePub + ".bak"
 
-	if err := os.Rename(key.PrivateKeyPath, privBak); err != nil {
-		return Key{}, "", fmt.Errorf("%w: %w", ErrRenameFailed, err)
-	}
-
-	if key.PublicKeyPath != "" {
-		if err := os.Rename(key.PublicKeyPath, pubBak); err != nil {
-			_ = os.Rename(privBak, key.PrivateKeyPath)
-			return Key{}, "", fmt.Errorf("%w: %w", ErrRenameFailed, err)
-		}
-	}
-
-	newKey, genErr := GenerateKeys(dir, opts)
+	// 1. Generate the new pair under a temporary name. Nothing live is touched,
+	//    so a failure here leaves the existing key completely intact.
+	tmpOpts := opts
+	tmpOpts.Filename = filepath.Base(livePriv) + ".rotate-tmp"
+	tmpOpts.Overwrite = true
+	tmpKey, genErr := GenerateKeys(dir, tmpOpts)
 	if genErr != nil {
-		rollbackErr := os.Rename(privBak, key.PrivateKeyPath)
-		if key.PublicKeyPath != "" {
-			rollbackErr = errors.Join(rollbackErr, os.Rename(pubBak, key.PublicKeyPath))
+		return Key{}, "", errors.Join(ErrRotateFailed, genErr)
+	}
+	tmpPriv := tmpKey.PrivateKeyPath
+	tmpPub := tmpKey.PublicKeyPath
+
+	// 2. Preserve the old pair as .bak by copying, so the live files stay in
+	//    place until they are atomically replaced.
+	if err := copyFile(livePriv, privBak, 0600); err != nil {
+		_ = errors.Join(os.Remove(tmpPriv), os.Remove(tmpPub))
+		return Key{}, "", errors.Join(ErrRotateFailed, err)
+	}
+	if livePub != "" {
+		if err := copyFile(livePub, pubBak, 0644); err != nil {
+			_ = errors.Join(os.Remove(tmpPriv), os.Remove(tmpPub), os.Remove(privBak))
+			return Key{}, "", errors.Join(ErrRotateFailed, err)
 		}
-		return Key{}, "", errors.Join(ErrRotateFailed, genErr, rollbackErr)
 	}
 
-	return newKey, privBak, nil
+	// 3. Move the new pair into the live names. rename replaces the destination,
+	//    so the private key is always present under its name.
+	if err := os.Rename(tmpPriv, livePriv); err != nil {
+		_ = errors.Join(os.Remove(tmpPriv), os.Remove(tmpPub), os.Remove(privBak), os.Remove(pubBak))
+		return Key{}, "", errors.Join(ErrRotateFailed, ErrRenameFailed, err)
+	}
+	if livePub != "" {
+		if err := os.Rename(tmpPub, livePub); err != nil {
+			// Private key already swapped; restore the old one from .bak so the
+			// live pair stays consistent, and report failure.
+			rb := copyFile(privBak, livePriv, 0600)
+			_ = os.Remove(tmpPub)
+			return Key{}, "", errors.Join(ErrRotateFailed, ErrRenameFailed, err, rb)
+		}
+	}
+
+	tmpKey.PrivateKeyPath = livePriv
+	tmpKey.PublicKeyPath = livePub
+	return tmpKey, privBak, nil
+}
+
+// copyFile copies src to dst, truncating dst, with the given permissions.
+func copyFile(src, dst string, perm os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	return out.Close()
 }

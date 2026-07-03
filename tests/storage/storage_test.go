@@ -74,6 +74,31 @@ func TestInit_DirPermissions(t *testing.T) {
 	}
 }
 
+// TestInit_TightensExistingDirPermissions ensures Init repairs a pre-existing
+// vault directory that was created with laxer permissions.
+func TestInit_TightensExistingDirPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod semantics differ on Windows")
+	}
+
+	vaultDir := filepath.Join(t.TempDir(), ".keyward")
+	if err := os.MkdirAll(vaultDir, 0755); err != nil { // too permissive
+		t.Fatal(err)
+	}
+
+	if err := storage.Init(vaultDir); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	info, err := os.Stat(vaultDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0700 {
+		t.Errorf("existing vaultDir perms = %04o, want Init to tighten to 0700", info.Mode().Perm())
+	}
+}
+
 // ── Save / Load ───────────────────────────────────────────────────────────────
 
 func TestSaveLoad_RoundTrip(t *testing.T) {
@@ -125,6 +150,67 @@ func TestSave_UpdatesSavedAt(t *testing.T) {
 	}
 	if s.SavedAt.Before(before) || s.SavedAt.After(after) {
 		t.Errorf("SavedAt = %v out of expected range [%v, %v]", s.SavedAt, before, after)
+	}
+}
+
+// TestSave_FailureKeepsDataAndSavedAt injects a write failure by making the
+// vault dir read-only. Save must fail, leave the previously saved metadata
+// intact, and NOT advance the caller's SavedAt (which would claim a save that
+// never hit disk).
+func TestSave_FailureKeepsDataAndSavedAt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only dir does not block writes the same way on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission bits")
+	}
+
+	dir := t.TempDir()
+	id := newIdentity(t)
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:first")); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Save(s, dir, id); err != nil {
+		t.Fatalf("initial Save: %v", err)
+	}
+	savedAt := s.SavedAt
+
+	// Add another key, then block writes and attempt to persist it.
+	if err := storage.Put(s, testMeta("SHA256:second")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0700) })
+
+	if err := storage.Save(s, dir, id); err == nil {
+		t.Fatal("expected Save to fail on a read-only directory")
+	}
+
+	// SavedAt must be unchanged: the write did not reach disk.
+	if !s.SavedAt.Equal(savedAt) {
+		t.Errorf("SavedAt advanced on failed Save: %v -> %v", savedAt, s.SavedAt)
+	}
+
+	// The first, successfully-saved state must still be loadable and must not
+	// contain the second key.
+	os.Chmod(dir, 0700)
+	loaded, err := storage.Load(dir, id)
+	if err != nil {
+		t.Fatalf("Load after failed Save: %v", err)
+	}
+	if _, err := storage.Get(loaded, "SHA256:first"); err != nil {
+		t.Errorf("first key lost after failed Save: %v", err)
+	}
+	if _, err := storage.Get(loaded, "SHA256:second"); err == nil {
+		t.Error("second key must not be present after a failed Save")
+	}
+
+	// No orphaned .bak must remain after a rolled-back Save.
+	if _, err := os.Stat(filepath.Join(dir, "metadata.age.bak")); !os.IsNotExist(err) {
+		t.Errorf("metadata.age.bak should be rolled back, stat err = %v", err)
 	}
 }
 
@@ -203,6 +289,53 @@ func TestLoad_BakRecovery(t *testing.T) {
 	}
 	if _, err := storage.Get(loaded, "SHA256:bak1"); err != nil {
 		t.Error("key not recovered from .bak file")
+	}
+}
+
+// TestLoad_CorruptPrimaryRecoversFromBak covers a crash where the primary file
+// exists but is truncated/corrupt while a good .bak is present. Load must
+// recover from .bak, promote it, and return the data.
+func TestLoad_CorruptPrimaryRecoversFromBak(t *testing.T) {
+	dir := t.TempDir()
+	id := newIdentity(t)
+
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:good")); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Save(s, dir, id); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	metaPath := filepath.Join(dir, "metadata.age")
+	bakPath := metaPath + ".bak"
+
+	// Keep a valid copy as .bak, then corrupt the primary in place.
+	good, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bakPath, good, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, []byte("garbage-not-age"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := storage.Load(dir, id)
+	if err != nil {
+		t.Fatalf("Load with corrupt primary: %v", err)
+	}
+	if _, err := storage.Get(loaded, "SHA256:good"); err != nil {
+		t.Error("key not recovered from .bak when primary was corrupt")
+	}
+
+	// The good backup should have been promoted to the primary path.
+	if _, err := os.Stat(bakPath); !os.IsNotExist(err) {
+		t.Errorf(".bak should be promoted (removed); stat err = %v", err)
+	}
+	if _, err := storage.Load(dir, id); err != nil {
+		t.Errorf("primary not usable after promotion: %v", err)
 	}
 }
 

@@ -220,7 +220,12 @@ func (m keyDetailModel) submitRotate() (keyDetailModel, tea.Cmd) {
 		oldNote = m.meta.Note
 	}
 	m.confirmRotate = false
-	return m, rotateKeyCmd(m.key, oldTags, oldNote, comment, pass)
+	cmd := rotateKeyCmd(m.key, oldTags, oldNote, comment, pass)
+	// Clear the passphrase fields immediately so the plaintext isn't retained
+	// in the model whether the rotation later succeeds or fails.
+	m.rotInputs[1].SetValue("")
+	m.rotInputs[2].SetValue("")
+	return m, cmd
 }
 
 // ── metadata edit mode ────────────────────────────────────────────────────────
@@ -329,7 +334,7 @@ func rotateKeyCmd(k keys.Key, oldTags []string, oldNote, comment, passphrase str
 			Overwrite:            true,
 			BitSize:              k.BitSize,
 			Comment:              comment,
-			Passphrase:           passphrase,
+			Passphrase:           []byte(passphrase),
 			AllowEmptyPassphrase: passphrase == "",
 		}
 		newKey, _, err := keys.RotateKey(k, opts)

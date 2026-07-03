@@ -145,6 +145,63 @@ Match host *.internal exec "ping -c1 %h"
 	}
 }
 
+// TestParseBytes_TabSeparators verifies that ssh_config's tab separator is
+// honoured everywhere a space is: on the Host/Match keyword line and between a
+// param key and its value. Before the fix, "Host\tgithub.com" fell through to
+// parseParam and no block was created, silently merging following directives
+// into the previous block.
+func TestParseBytes_TabSeparators(t *testing.T) {
+	raw := "Host\tgithub.com\n\tHostName\tgithub.com\n\tUser\tgit\n"
+	c := cfgBytes(t, raw)
+
+	if len(c.Blocks) != 1 {
+		t.Fatalf("want 1 block for tab-separated Host, got %d", len(c.Blocks))
+	}
+	b := c.Blocks[0]
+	if b.Pattern != "github.com" {
+		t.Errorf("Pattern = %q, want github.com", b.Pattern)
+	}
+	if b.IsMatch {
+		t.Error("IsMatch should be false for a Host block")
+	}
+
+	// Tab-separated params must be parsed into key/value, not one blob.
+	vals, ok := config.GetParam(&b, "HostName")
+	if !ok || len(vals) == 0 || vals[0] != "github.com" {
+		t.Errorf("GetParam(HostName) = %v, %v; want [github.com], true", vals, ok)
+	}
+	vals, ok = config.GetParam(&b, "User")
+	if !ok || len(vals) == 0 || vals[0] != "git" {
+		t.Errorf("GetParam(User) = %v, %v; want [git], true", vals, ok)
+	}
+
+	// FindBlock must locate the tab-separated host.
+	if fb := config.FindBlock(&c, "github.com"); fb == nil {
+		t.Error("FindBlock(github.com) = nil for tab-separated Host")
+	}
+
+	// Round-trip must remain byte-identical (Raw preserves the tabs).
+	if got := config.Serialize(&c); !bytes.Equal(got, []byte(raw)) {
+		t.Errorf("tab-separated config changed after round-trip:\ngot:\n%q\nwant:\n%q", got, raw)
+	}
+}
+
+// TestParseBytes_TabSeparatedMatch mirrors the above for Match blocks.
+func TestParseBytes_TabSeparatedMatch(t *testing.T) {
+	raw := "Match\thost *.internal\n\tProxyJump bastion\n"
+	c := cfgBytes(t, raw)
+
+	if len(c.Blocks) != 1 {
+		t.Fatalf("want 1 block for tab-separated Match, got %d", len(c.Blocks))
+	}
+	if !c.Blocks[0].IsMatch {
+		t.Error("tab-separated Match not detected as IsMatch")
+	}
+	if got := config.Serialize(&c); !bytes.Equal(got, []byte(raw)) {
+		t.Errorf("tab-separated Match changed after round-trip:\ngot:\n%q", got)
+	}
+}
+
 func TestParseBytes_WindowsLineEndings(t *testing.T) {
 	raw := "Host win\r\n    HostName windows.local\r\n    User admin\r\n"
 	c := config.ParseBytes("fake", []byte(raw))

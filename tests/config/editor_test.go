@@ -39,13 +39,16 @@ func TestFindBlock_Found(t *testing.T) {
 	}
 }
 
-// TestFindBlock_CaseInsensitive ensures pattern matching follows SSH rules.
-func TestFindBlock_CaseInsensitive(t *testing.T) {
+// TestFindBlock_CaseSensitivePattern ensures host patterns are matched
+// case-sensitively (OpenSSH semantics), consistent with duplicate detection.
+func TestFindBlock_CaseSensitivePattern(t *testing.T) {
 	c := threeHostConfig(t)
 
-	b := config.FindBlock(&c, "BETA")
-	if b == nil {
-		t.Fatal("FindBlock(BETA): case-insensitive match expected non-nil")
+	if b := config.FindBlock(&c, "BETA"); b != nil {
+		t.Errorf("FindBlock(BETA): want nil (case-sensitive), got %q", b.Pattern)
+	}
+	if b := config.FindBlock(&c, "beta"); b == nil {
+		t.Fatal("FindBlock(beta): expected non-nil")
 	}
 }
 
@@ -314,6 +317,31 @@ func TestReset_ClearsModifiedFlag(t *testing.T) {
 
 	if c.Modified {
 		t.Error("Config.Modified should be false after Reset")
+	}
+}
+
+// TestFindBlock_CaseSensitive verifies that "Foo" and "foo" are distinct blocks,
+// so an edit to "foo" never silently targets "Foo".
+func TestFindBlock_CaseSensitive(t *testing.T) {
+	raw := "Host Foo\n    User upper\n\nHost foo\n    User lower\n"
+	c := config.ParseBytes("cfg", []byte(raw))
+
+	lower := config.FindBlock(&c, "foo")
+	if lower == nil {
+		t.Fatal("FindBlock(foo) = nil, want the lowercase block")
+	}
+	if vals, ok := config.GetParam(lower, "User"); !ok || vals[0] != "lower" {
+		t.Errorf("FindBlock(foo) returned the wrong block; User = %v", vals)
+	}
+
+	if !config.RemoveBlock(&c, "foo") {
+		t.Fatal("RemoveBlock(foo) = false")
+	}
+	if config.FindBlock(&c, "foo") != nil {
+		t.Error("foo should be gone after RemoveBlock(foo)")
+	}
+	if config.FindBlock(&c, "Foo") == nil {
+		t.Error("Foo must remain after removing foo")
 	}
 }
 

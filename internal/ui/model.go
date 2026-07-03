@@ -113,10 +113,14 @@ type navigateMsg struct {
 type errMsg struct{ err error }
 
 // keysReloadedMsg carries refreshed keys, config, and audit report after an SSH dir change.
+// sshDir is the directory that was scanned; err is non-nil when the scan failed,
+// in which case keys/cfg/report are unset and the previous state must be kept.
 type keysReloadedMsg struct {
+	sshDir string
 	keys   []keys.Key
 	cfg    *config.Config
 	report audit.AuditReport
+	err    error
 }
 
 // keyGeneratedMsg is emitted when a new key has been created.
@@ -346,17 +350,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(delCmds...)
 
 	case settingsSSHDirChangedMsg:
-		m.sshDir = msg.sshDir
-		m.settingsView.sshDir = msg.sshDir
-		return m, tea.Batch(m.reloadKeys(), m.savePrefs())
+		// Don't commit the new dir or persist prefs yet — wait for a
+		// successful scan so a bad path can't blank the key list.
+		return m, m.reloadKeysFrom(msg.sshDir)
 
 	case keysReloadedMsg:
+		if msg.err != nil {
+			// Scan failed: keep current keys/config/report and surface the
+			// error instead of wiping the list; the bad dir is not persisted.
+			m.err = fmt.Errorf("cannot use %s: %w", msg.sshDir, msg.err)
+			return m, nil
+		}
+		m.err = nil
+		m.sshDir = msg.sshDir
+		m.settingsView.sshDir = msg.sshDir
 		m.keys = msg.keys
 		m.report = msg.report
 		m.cfg = msg.cfg // nil if no config found at new SSH dir
 		m.cfgEditor = newConfigModel(m.cfg, m.sshDir)
 		m.keyList = newKeyListModel(m.keys, m.report.Results)
-		return m, nil
+		// Persist the SSH dir only after a successful scan.
+		return m, m.savePrefs()
 
 	case backupResultMsg:
 		m.backupView, _ = m.backupView.update(msg)
@@ -642,16 +656,25 @@ func (m Model) savePrefs() tea.Cmd {
 	}
 }
 
-// reloadKeys re-scans sshDir, reloads SSH config, and re-runs the audit in a background command.
+// reloadKeys re-scans the current sshDir, reloads SSH config, and re-runs the audit.
 func (m Model) reloadKeys() tea.Cmd {
-	sshDir := m.sshDir
+	return m.reloadKeysFrom(m.sshDir)
+}
+
+// reloadKeysFrom re-scans sshDir, reloads SSH config, and re-runs the audit in a
+// background command. On scan failure it returns keysReloadedMsg{err: ...} so the
+// caller can keep the previous state instead of blanking the key list.
+func (m Model) reloadKeysFrom(sshDir string) tea.Cmd {
 	return func() tea.Msg {
-		ks, _ := keys.Parse(sshDir)
+		ks, err := keys.Parse(sshDir)
+		if err != nil {
+			return keysReloadedMsg{sshDir: sshDir, err: err}
+		}
 		var newCfg *config.Config
 		if c, err := config.ParseFile(filepath.Join(sshDir, "config")); err == nil {
 			newCfg = &c
 		}
 		report := audit.Run(ks, newCfg, sshDir)
-		return keysReloadedMsg{keys: ks, cfg: newCfg, report: report}
+		return keysReloadedMsg{sshDir: sshDir, keys: ks, cfg: newCfg, report: report}
 	}
 }

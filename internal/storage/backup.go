@@ -103,26 +103,7 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error
 	filename := time.Now().Format("2006-01-02_15-04-05") + ".tar.age"
 	finalPath := filepath.Join(backupPath, filename)
 
-	tmp, err := os.CreateTemp(backupPath, "backup-*.tmp")
-	if err != nil {
-		return "", ErrBackupFailed
-	}
-	tmpPath := tmp.Name()
-
-	if _, err := tmp.Write(ciphertext); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return "", ErrBackupFailed
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return "", ErrBackupFailed
-	}
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		os.Remove(tmpPath)
-		return "", ErrBackupFailed
-	}
-	if err := os.Chmod(finalPath, 0600); err != nil {
+	if err := atomicWriteFile(finalPath, ciphertext, 0600); err != nil {
 		return "", ErrBackupFailed
 	}
 
@@ -132,6 +113,14 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (string, error
 }
 
 const maxBackups = 5
+
+const (
+	// maxBackupSize caps the encrypted archive we buffer into memory on restore.
+	maxBackupSize = 128 << 20 // 128 MiB
+	// maxRestoreFileSize caps any single file extracted from a backup, so a
+	// crafted or corrupt archive can't exhaust memory (local self-DoS).
+	maxRestoreFileSize = 64 << 20 // 64 MiB
+)
 
 // pruneBackups removes the oldest .tar.age files in dir, keeping at most max.
 func pruneBackups(dir string, max int) {
@@ -154,6 +143,12 @@ func pruneBackups(dir string, max int) {
 
 func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) error {
 
+	if fi, err := os.Stat(backupPath); err != nil {
+		return ErrBackupNotFound
+	} else if fi.Size() > maxBackupSize {
+		return ErrRestoreFailed
+	}
+
 	data, err := os.ReadFile(backupPath)
 	if err != nil {
 		return ErrBackupNotFound
@@ -175,23 +170,33 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 			return ErrRestoreFailed
 		}
 
-		fileData, err := io.ReadAll(tarReader)
+		if header.Size < 0 || header.Size > maxRestoreFileSize {
+			return ErrRestoreFailed
+		}
+		fileData, err := io.ReadAll(io.LimitReader(tarReader, maxRestoreFileSize+1))
 		if err != nil {
 			return ErrRestoreFailed
 		}
-
-		if strings.Contains(header.Name, "..") {
-			continue
+		if int64(len(fileData)) > maxRestoreFileSize {
+			return ErrRestoreFailed
 		}
 
 		name := filepath.ToSlash(header.Name)
 
-		var targetPath string
+		var base, rel string
 		if strings.HasPrefix(name, defaultDir+"/") {
-			rel := name[len(defaultDir)+1:]
-			targetPath = filepath.Join(vaultDir, rel)
+			base, rel = vaultDir, name[len(defaultDir)+1:]
 		} else {
-			targetPath = filepath.Join(sshDir, name)
+			base, rel = sshDir, name
+		}
+		targetPath := filepath.Join(base, filepath.FromSlash(rel))
+
+		// Containment guard: filepath.Join resolves ".." components, so if the
+		// result escapes base it's a path-traversal attempt — skip it. This
+		// replaces the fragile strings.Contains(name, "..") check.
+		cleanBase := filepath.Clean(base)
+		if targetPath != cleanBase && !strings.HasPrefix(targetPath, cleanBase+string(os.PathSeparator)) {
+			continue
 		}
 
 		_, statErr := os.Stat(targetPath)
@@ -228,7 +233,9 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 			os.Rename(targetPath+".pre-restore", targetPath)
 			return ErrRestoreFailed
 		}
-		if err := os.Chmod(targetPath, os.FileMode(header.Mode).Perm()); err != nil {
+		// Clamp to at most owner rw; never trust the archive's mode bits (a
+		// restored private key must not land at 0777).
+		if err := os.Chmod(targetPath, os.FileMode(header.Mode).Perm()&0600); err != nil {
 			os.Rename(targetPath+".pre-restore", targetPath)
 			return ErrRestoreFailed
 		}

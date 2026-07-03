@@ -138,7 +138,9 @@ func (m configModel) hints() string {
 	case m.confirmDeleteParam:
 		return "d  confirm delete param  ·  esc  cancel"
 	case m.paneRight:
-		return "↑/↓  navigate  ·  a  add  ·  e  edit  ·  t  toggle  ·  d  delete  ·  esc  back  ·  s  save  ·  " + nav
+		// Omit the "switch screens" hint here: the parameters pane already has
+		// a long bar and the extra text pushes the frame wider than the view.
+		return "↑/↓  navigate  ·  a  add  ·  e  edit  ·  t  toggle  ·  d  delete  ·  esc  back  ·  s  save"
 	default:
 		return "↑/↓  navigate  ·  a  add  ·  r  rename  ·  d  delete  ·  enter  open  ·  s  save  ·  " + nav
 	}
@@ -283,6 +285,7 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 					m.saveErr = err
 					m.saveMsg = "✗  save failed: " + err.Error()
 				} else {
+					m.saveErr = nil
 					m.saveMsg = "✓  saved"
 					m.saved = true
 				}
@@ -438,6 +441,7 @@ func (m configModel) createConfig() (configModel, tea.Cmd) {
 		return m, nil
 	}
 	m.cfg = &c
+	m.saveErr = nil
 	m.saveMsg = "✓  created " + cfgPath
 	return m, nil
 }

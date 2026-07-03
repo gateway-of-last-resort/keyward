@@ -136,6 +136,21 @@ func TestCheckPassphrase_PublicOnly_NoFinding(t *testing.T) {
 	}
 }
 
+// A key that is not public-only but has no recognized private path (junk before
+// the PEM header) must not be silently skipped.
+func TestCheckPassphrase_UnrecognizedPrivate_Warning(t *testing.T) {
+	k := baseKey(t)
+	k.PrivateKeyPath = ""  // parse couldn't recognize the private half
+	k.IsPublicOnly = false // but it's not a public-only key
+
+	results := checkPassphrase(k)
+
+	if !hasSeverity(results, Warning) {
+		t.Error("unrecognized private key should produce a Warning, not silence")
+	}
+	allHaveFix(t, results)
+}
+
 func TestCheckPassphrase_MissingFile_Warning(t *testing.T) {
 	k := baseKey(t)
 	k.PrivateKeyPath = "/nonexistent/id_ed25519"
@@ -269,10 +284,6 @@ func TestCheckBitSize_ZeroBitSize_Nil(t *testing.T) {
 // ── CheckPermissions ──────────────────────────────────────────────────────────
 
 func TestCheckPermissions_WrongPerms_Critical(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("chmod semantics differ on Windows")
-	}
-
 	dir := t.TempDir()
 	privPath := filepath.Join(dir, "id_ed25519")
 	if err := os.WriteFile(privPath, []byte("placeholder"), 0644); err != nil { // неверные права
@@ -285,6 +296,14 @@ func TestCheckPermissions_WrongPerms_Critical(t *testing.T) {
 
 	results := checkPermissions(k)
 
+	if runtime.GOOS == "windows" {
+		// POSIX bits are synthetic on Windows, so no Critical must be raised.
+		if hasSeverity(results, Critical) {
+			t.Error("Windows: POSIX-bit perm check must not raise Critical")
+		}
+		return
+	}
+
 	if !hasSeverity(results, Critical) {
 		t.Error("private key with 0644 should produce Critical")
 	}
@@ -293,7 +312,7 @@ func TestCheckPermissions_WrongPerms_Critical(t *testing.T) {
 
 func TestCheckPermissions_CorrectPerms_Clean(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("chmod semantics differ on Windows")
+		t.Skip("baseKey chmod 0600 has no effect on Windows; covered by WrongPerms")
 	}
 
 	k := baseKey(t) // файл уже создан с 0600
@@ -315,6 +334,31 @@ func TestCheckPermissions_PublicOnly_NoCheck(t *testing.T) {
 	if hasSeverity(results, Critical) {
 		t.Error("public-only key should not produce Critical from CheckPermissions")
 	}
+}
+
+func TestCheckSSHDirPermissions_Platform(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0755); err != nil { // wrong on POSIX (want 0700)
+		t.Fatal(err)
+	}
+
+	results := newCheckSSHDirPermissions(dir)()
+
+	if runtime.GOOS == "windows" {
+		// Must not raise a false Critical; instead an Info that it's skipped.
+		if hasSeverity(results, Critical) {
+			t.Error("Windows: dir perm check must not raise Critical")
+		}
+		if !hasSeverity(results, Info) {
+			t.Error("Windows: expected an Info noting the check is skipped")
+		}
+		return
+	}
+
+	if !hasSeverity(results, Critical) {
+		t.Error("0755 ~/.ssh should produce Critical on POSIX")
+	}
+	allHaveFix(t, results)
 }
 
 // ── CheckAge ──────────────────────────────────────────────────────────────────

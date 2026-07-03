@@ -35,6 +35,7 @@ type backupModel struct {
 	backups       []string // list of existing backup files
 	cursor        int      // selected backup index
 	confirmDelete bool
+	restoreTarget string // backup path pending restore confirmation (stepConfirm)
 }
 
 type backupStep int
@@ -53,6 +54,8 @@ func (m backupModel) hints() string {
 	switch m.promptStep {
 	case stepPasswd:
 		return "enter  confirm  ·  esc  cancel"
+	case stepConfirm:
+		return "y  confirm restore  ·  n / esc  cancel"
 	case stepRestore:
 		return "enter  restore  ·  esc  cancel"
 	default:
@@ -94,6 +97,8 @@ func (m backupModel) update(msg tea.Msg) (backupModel, tea.Cmd) {
 			return m.updateIdle(msg)
 		case stepPasswd:
 			return m.updatePasswd(msg)
+		case stepConfirm:
+			return m.updateConfirm(msg)
 		case stepRestore:
 			return m.updateRestore(msg)
 		}
@@ -195,20 +200,40 @@ func (m backupModel) updateRestore(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 			m.isError = true
 			return m, nil
 		}
-		backupFile := m.backups[idx-1]
-		if m.identity != nil {
-			return m, m.runBackupDirect(backupFile)
-		}
-		m.passwordInput.SetValue("")
-		m.passwordInput.Placeholder = "vault password (for restore)"
-		m.passwordInput.Focus()
-		m.confirmInput.SetValue(choice) // remember selection for runBackup
-		m.promptStep = stepPasswd
+		// Restore overwrites files in ~/.ssh irreversibly, so require an
+		// explicit confirmation before touching anything (the declared
+		// stepConfirm). The chosen number stays in confirmInput for the
+		// password path in runBackup.
+		m.restoreTarget = m.backups[idx-1]
+		m.promptStep = stepConfirm
 		return m, nil
 	}
 	var cmd tea.Cmd
 	m.confirmInput, cmd = m.confirmInput.Update(msg)
 	return m, cmd
+}
+
+// updateConfirm handles the restore confirmation prompt. Only an explicit "y"
+// proceeds; anything else cancels back to the menu without touching ~/.ssh.
+func (m backupModel) updateConfirm(msg tea.KeyMsg) (backupModel, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		backupFile := m.restoreTarget
+		if m.identity != nil {
+			m.promptStep = stepIdle
+			return m, m.runBackupDirect(backupFile)
+		}
+		// Vault still locked: collect the password, then runBackup restores
+		// the selection remembered in confirmInput.
+		m.passwordInput.SetValue("")
+		m.passwordInput.Placeholder = "vault password (for restore)"
+		m.passwordInput.Focus()
+		m.promptStep = stepPasswd
+		return m, nil
+	default:
+		m.promptStep = stepIdle
+		return m, nil
+	}
 }
 
 // runBackupDirect creates or restores a backup using the already-loaded identity.
@@ -321,6 +346,11 @@ func (m backupModel) view() string {
 		}
 	case stepPasswd:
 		sb.WriteString(labelStyle.Render("Password") + "  " + m.passwordInput.View() + "\n")
+	case stepConfirm:
+		sb.WriteString(warnMsgStyle.Render(fmt.Sprintf(
+			"  restore overwrites files in %s — this cannot be undone.", m.sshDir)) + "\n")
+		sb.WriteString(warnMsgStyle.Render(fmt.Sprintf(
+			"  restore from %s? press y to confirm · n / esc to cancel", filepath.Base(m.restoreTarget))) + "\n")
 	case stepRestore:
 		sb.WriteString(labelStyle.Render("Restore #") + "  " + m.confirmInput.View() + "\n")
 	}
