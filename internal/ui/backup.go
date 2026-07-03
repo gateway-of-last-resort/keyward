@@ -244,11 +244,11 @@ func (m backupModel) runBackupDirect(restoreFile string) tea.Cmd {
 	vaultDir := m.vaultDir
 	return func() tea.Msg {
 		if restoreFile == "" {
-			path, err := storage.CreateBackup(sshDir, vaultDir, identity)
+			res, err := storage.CreateBackup(sshDir, vaultDir, identity)
 			if err != nil {
 				return backupResultMsg{err: fmt.Errorf("backup failed: %w", err)}
 			}
-			return backupResultMsg{msg: "backup saved: " + filepath.Base(path)}
+			return backupResultMsg{msg: backupSavedMsg(res)}
 		}
 		if err := storage.RestoreBackup(restoreFile, sshDir, vaultDir, identity); err != nil {
 			return backupResultMsg{err: fmt.Errorf("restore failed: %w", err)}
@@ -288,12 +288,25 @@ func (m backupModel) runBackup(password string) tea.Cmd {
 			return backupResultMsg{msg: "restored from " + filepath.Base(backupFile), restored: true}
 		}
 
-		path, err := storage.CreateBackup(m.sshDir, m.vaultDir, identity)
+		res, err := storage.CreateBackup(m.sshDir, m.vaultDir, identity)
 		if err != nil {
 			return backupResultMsg{err: fmt.Errorf("backup failed: %w", err)}
 		}
-		return backupResultMsg{msg: "backup saved: " + filepath.Base(path)}
+		return backupResultMsg{msg: backupSavedMsg(res)}
 	}
+}
+
+// backupSavedMsg builds the success line, appending honest notes when some files
+// were left out of the archive or old backups couldn't be pruned.
+func backupSavedMsg(res storage.BackupResult) string {
+	msg := "backup saved: " + filepath.Base(res.Path)
+	if len(res.Skipped) > 0 {
+		msg += fmt.Sprintf(" (skipped %d unreadable: %s)", len(res.Skipped), strings.Join(res.Skipped, ", "))
+	}
+	if res.PruneErr != nil {
+		msg += " (warning: old backups not pruned)"
+	}
+	return msg
 }
 
 type backupResultMsg struct {

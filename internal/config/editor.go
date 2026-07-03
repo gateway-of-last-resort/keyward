@@ -41,6 +41,7 @@ func FindBlock(c *Config, pattern string) *Block {
 
 // AddBlock appends a new Host block with the given pattern and sets Modified.
 func AddBlock(c *Config, pattern string) {
+	pattern = sanitize(pattern)
 	hostToken := Token{
 		Type:  HOST,
 		Key:   "Host",
@@ -75,6 +76,7 @@ func DuplicateBlock(c *Config, pattern, newPattern string) bool {
 	idx := findBlockIdx(c, pattern)
 
 	if idx != -1 {
+		newPattern = sanitize(newPattern)
 		newBlock := c.Blocks[idx]
 		newBlock.Tokens = append([]Token{}, c.Blocks[idx].Tokens...)
 		newBlock.Pattern = newPattern
