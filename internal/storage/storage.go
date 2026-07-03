@@ -25,6 +25,13 @@ func Init(dir string) error {
 		if err := os.MkdirAll(d, 0700); err != nil {
 			return err
 		}
+		// MkdirAll leaves an already-existing directory's mode untouched, so a
+		// vault created earlier under a lax umask (or by hand) could stay
+		// group/world-readable. Force 0700 — this is the one place vault dir
+		// permissions are set.
+		if err := os.Chmod(d, 0700); err != nil {
+			return err
+		}
 	}
 
 	return nil

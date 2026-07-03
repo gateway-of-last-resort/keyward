@@ -74,6 +74,31 @@ func TestInit_DirPermissions(t *testing.T) {
 	}
 }
 
+// TestInit_TightensExistingDirPermissions ensures Init repairs a pre-existing
+// vault directory that was created with laxer permissions.
+func TestInit_TightensExistingDirPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod semantics differ on Windows")
+	}
+
+	vaultDir := filepath.Join(t.TempDir(), ".keyward")
+	if err := os.MkdirAll(vaultDir, 0755); err != nil { // too permissive
+		t.Fatal(err)
+	}
+
+	if err := storage.Init(vaultDir); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	info, err := os.Stat(vaultDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0700 {
+		t.Errorf("existing vaultDir perms = %04o, want Init to tighten to 0700", info.Mode().Perm())
+	}
+}
+
 // ── Save / Load ───────────────────────────────────────────────────────────────
 
 func TestSaveLoad_RoundTrip(t *testing.T) {
