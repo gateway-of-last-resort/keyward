@@ -49,6 +49,20 @@ homebrew_casks:
 checksum:
   name_template: checksums.txt
 
+# Keyless cosign signature over checksums.txt (Sigstore OIDC in CI). Verifying
+# the signed checksums covers every artifact listed in it.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    output: true
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+
 changelog:
   use: github
   sort: asc
