@@ -205,7 +205,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 
 	_, err = filePriv.Write(privPem)
 	if err != nil {
-		filePriv.Close()
+		_ = filePriv.Close()
 		cleanup()
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, privatePath)
 	}
@@ -223,7 +223,7 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 
 	_, err = filePub.Write(pubPem)
 	if err != nil {
-		filePub.Close()
+		_ = filePub.Close()
 		cleanup()
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, publicPath)
 	}

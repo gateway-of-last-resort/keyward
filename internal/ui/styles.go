@@ -133,7 +133,7 @@ func ScoreBar(score, width int) string {
 
 // hexRGB parses a "#RRGGBB" lipgloss.Color into r, g, b components.
 func hexRGB(c lipgloss.Color) (r, g, b int) {
-	fmt.Sscanf(strings.TrimPrefix(string(c), "#"), "%02x%02x%02x", &r, &g, &b)
+	_, _ = fmt.Sscanf(strings.TrimPrefix(string(c), "#"), "%02x%02x%02x", &r, &g, &b)
 	return
 }
 

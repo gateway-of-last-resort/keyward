@@ -57,24 +57,24 @@ func WriteAtomic(path string, data []byte) error {
 	}
 	_, err = tempFile.Write(data)
 	if err != nil {
-		tempFile.Close()
-		os.Remove(tempFile.Name())
+		_ = tempFile.Close()
+		_ = os.Remove(tempFile.Name())
 		return err
 	}
 
 	// fsync the data before the rename so a crash can't leave the config
 	// renamed into place but truncated.
 	if err := tempFile.Sync(); err != nil {
-		tempFile.Close()
-		os.Remove(tempFile.Name())
+		_ = tempFile.Close()
+		_ = os.Remove(tempFile.Name())
 		return err
 	}
 	if err := tempFile.Close(); err != nil {
-		os.Remove(tempFile.Name())
+		_ = os.Remove(tempFile.Name())
 		return err
 	}
 	if err := os.Rename(tempFile.Name(), path); err != nil {
-		os.Remove(tempFile.Name())
+		_ = os.Remove(tempFile.Name())
 		return err
 	}
 	if err := os.Chmod(path, 0600); err != nil {
@@ -90,7 +90,7 @@ func WriteAtomic(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	return d.Sync()
 }
 

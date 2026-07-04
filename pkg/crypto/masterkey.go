@@ -86,8 +86,8 @@ func writeMasterKey(path string, identity *age.X25519Identity, password string) 
 
 	for _, w := range writes {
 		if err := w(); err != nil {
-			tmp.Close()
-			os.Remove(tmp.Name())
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
 			return fmt.Errorf("%w: %w", ErrEncryptFailed, err)
 		}
 	}
@@ -95,18 +95,18 @@ func writeMasterKey(path string, identity *age.X25519Identity, password string) 
 	// fsync the data before the rename so a crash can't leave master.key
 	// renamed into place but zero-length or truncated.
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("%w: %w", ErrWriteFailed, err)
 	}
 
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("%w: %w", ErrWriteFailed, err)
 	}
 
 	if err := os.Rename(tmp.Name(), path); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("%w: %w", ErrWriteFailed, err)
 	}
 
@@ -145,7 +145,7 @@ func syncDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	if err := d.Sync(); err != nil {
 		return fmt.Errorf("%w: %w", ErrWriteFailed, err)
 	}

@@ -39,7 +39,7 @@ func Encrypt(data []byte, recipient age.Recipient) ([]byte, error) {
 	}
 
 	if _, err := writer.Write(data); err != nil {
-		writer.Close()
+		_ = writer.Close()
 		return nil, fmt.Errorf("%w: %w", ErrEncryptFailed, err)
 	}
 

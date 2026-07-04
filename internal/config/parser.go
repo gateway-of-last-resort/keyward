@@ -107,7 +107,7 @@ func group(tokens []Token) (Block, []Block) {
 	var blocks []Block
 	var current *Block = nil
 	var pending []Token
-	var seenHost bool = false
+	var seenHost bool
 
 	for _, token := range tokens {
 

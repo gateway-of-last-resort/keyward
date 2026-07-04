@@ -651,7 +651,7 @@ func (m Model) savePrefs() tea.Cmd {
 	vaultDir := m.vaultDir
 	sshDir := m.sshDir
 	return func() tea.Msg {
-		storage.SavePrefs(vaultDir, storage.Prefs{SSHDir: sshDir})
+		_ = storage.SavePrefs(vaultDir, storage.Prefs{SSHDir: sshDir})
 		return nil
 	}
 }
