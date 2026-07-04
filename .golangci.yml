@@ -1,0 +1,19 @@
+version: "2"
+
+linters:
+  # The standard set (errcheck, govet, ineffassign, staticcheck, unused) plus a
+  # spell-checker for docs/comments.
+  default: standard
+  enable:
+    - misspell
+  exclusions:
+    rules:
+      # crypto/dsa is deprecated, but we import it deliberately to recognize and
+      # flag legacy DSA keys during the security audit.
+      - path: internal/keys/keys\.go
+        text: "SA1019"
+      # Test setup uses Chmod/WriteFile for fixtures where a failure would surface
+      # as a failing assertion anyway; unchecked returns there are acceptable.
+      - path: _test\.go
+        linters:
+          - errcheck

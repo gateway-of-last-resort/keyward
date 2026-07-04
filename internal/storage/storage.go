@@ -135,7 +135,7 @@ func Save(s *Store, dir string, identity age.Identity) error {
 
 	// The new file is durably on disk (atomicWriteFile fsynced it and the
 	// directory), so it is now safe to drop the backup and commit SavedAt.
-	os.Remove(bakPath)
+	_ = os.Remove(bakPath)
 	s.SavedAt = saved.SavedAt
 	return nil
 }

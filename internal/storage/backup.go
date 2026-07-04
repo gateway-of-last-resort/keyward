@@ -252,16 +252,16 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 		tmpPath := tmp.Name()
 
 		if _, err := tmp.Write(fileData); err != nil {
-			tmp.Close()
-			os.Remove(tmpPath)
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
 			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 		if err := tmp.Close(); err != nil {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 		if err := os.Rename(tmpPath, targetPath); err != nil {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 		// Clamp to at most owner rw; never trust the archive's mode bits (a
@@ -271,7 +271,7 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 		}
 
 		if moved {
-			os.Remove(targetPath + ".pre-restore")
+			_ = os.Remove(targetPath + ".pre-restore")
 		}
 	}
 

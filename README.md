@@ -5,12 +5,44 @@
 
 [![CI](https://github.com/gateway-of-last-resort/keyward/actions/workflows/ci.yml/badge.svg)](https://github.com/gateway-of-last-resort/keyward/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/gateway-of-last-resort/keyward?sort=semver)](https://github.com/gateway-of-last-resort/keyward/releases/latest)
+[![Go Report Card](https://goreportcard.com/badge/github.com/gateway-of-last-resort/keyward)](https://goreportcard.com/report/github.com/gateway-of-last-resort/keyward)
 [![Go](https://img.shields.io/github/go-mod/go-version/gateway-of-last-resort/keyward)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-<!-- TODO: записать демо TUI (vhs / asciinema) и вставить сюда:
-![Keyward demo](docs/demo.gif)
--->
+![Keyward demo](assets/demo.gif)
+
+## Contents
+
+- [Why Keyward?](#why-keyward)
+- [Features](#features)
+- [Install](#install)
+- [Usage](#usage)
+- [Security](#security)
+- [Building from source](#building-from-source)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Why Keyward?
+
+Your SSH setup is usually scattered across a pile of files: keys in `~/.ssh`,
+hosts in `~/.ssh/config`, permissions you hope are right, and no easy way to
+tell a strong key from a weak one. Keyward puts all of it behind a single
+keyboard-driven screen:
+
+- **See everything at once** — every key with its type, size, fingerprint, and
+  whether it's passphrase-protected, instead of `ls`-ing a directory and running
+  `ssh-keygen -l` by hand.
+- **Know if you're safe** — a graded **A–F** security audit flags weak keys,
+  missing passphrases, loose file permissions, and risky config directives, each
+  with a concrete fix.
+- **Edit config without breaking it** — host-by-host editing with validation and
+  **byte-identical** round-trip serialization: your comments, spacing, and
+  ordering survive untouched, and the last 5 versions are backed up automatically.
+- **Encrypted by default** — key metadata (tags, notes) and full `~/.ssh`
+  backups are encrypted at rest with a key derived from your master password.
+
+No daemon, no config file to learn, no network calls. Just a single static
+binary.
 
 ## Features
 
@@ -29,19 +61,36 @@
 
 ## Install
 
-### Download a release binary (recommended)
-
-Grab the archive for your platform from the
-[latest release](https://github.com/gateway-of-last-resort/keyward/releases/latest),
-extract it, and put `keyward` on your `PATH`:
+### Homebrew
 
 ```bash
-tar -xzf keyward_*_$(uname -s)_$(uname -m).tar.gz
-sudo mv keyward /usr/local/bin/
-keyward --version
+brew install gateway-of-last-resort/tap/keyward
 ```
 
-Verify the download against the published `checksums.txt` if you like.
+### Download a release binary
+
+Copy-paste this to grab the right archive for your OS/arch from the
+[latest release](https://github.com/gateway-of-last-resort/keyward/releases/latest),
+extract `keyward`, and put it on your `PATH`:
+
+```bash
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m); case "$ARCH" in x86_64) ARCH=amd64;; aarch64) ARCH=arm64;; esac
+VER=$(curl -fsSL https://api.github.com/repos/gateway-of-last-resort/keyward/releases/latest \
+      | grep -m1 '"tag_name"' | cut -d'"' -f4)
+curl -fsSL "https://github.com/gateway-of-last-resort/keyward/releases/download/${VER}/keyward_${VER#v}_${OS}_${ARCH}.tar.gz" -o keyward.tar.gz
+tar -xzf keyward.tar.gz keyward && sudo mv keyward /usr/local/bin/ && keyward --version
+```
+
+Prefer to do it by hand? Download the `keyward_<version>_<os>_<arch>.tar.gz` for
+your platform, then `tar -xzf` it. Verify the download against the published
+`checksums.txt` (and its cosign signature — see [SECURITY.md](SECURITY.md)) if
+you like.
+
+> [!NOTE]
+> Some browsers (notably Safari) auto-decompress `.gz` downloads, leaving you
+> with a plain `keyward_..._.tar`. If you only see a `.tar`, unpack it with
+> `tar -xf` (no `z`).
 
 ### With Go
 
@@ -90,8 +139,8 @@ backup/restore, change master password) are shown contextually in the footer.
 
 Keyward encrypts metadata and backups with a master key derived from your
 password (argon2id → ChaCha20-Poly1305 → age identity). For the full threat
-model, cryptographic details, and how to report a vulnerability, see
-[SECURITY.md](SECURITY.md).
+model, cryptographic details, release-signature verification, and how to report
+a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Building from source
 
@@ -102,9 +151,18 @@ go build ./cmd/keyward
 go test ./...
 ```
 
-Requires Go 1.26+. The only direct dependencies are
-[`filippo.io/age`](https://filippo.io/age) and `golang.org/x/crypto`.
+Requires Go 1.26+. The security-sensitive core (crypto, config, storage, audit,
+key parsing) depends only on [`filippo.io/age`](https://filippo.io/age) and
+`golang.org/x/crypto`; the terminal UI layer adds the
+[Charm](https://charm.sh) stack (`bubbletea`, `bubbles`, `lipgloss`).
+
+## Contributing
+
+Bug reports, feature ideas, and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for build/test/style conventions and the
+branch-and-PR workflow.
 
 ## License
 
 [MIT](LICENSE)
+</content>

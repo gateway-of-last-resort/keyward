@@ -277,7 +277,7 @@ func (m backupModel) runBackup(password string) tea.Cmd {
 		// if a restore was queued, do that; otherwise create backup
 		if m.promptStep == stepPasswd && m.confirmInput.Value() != "" {
 			var idx int
-			fmt.Sscanf(m.confirmInput.Value(), "%d", &idx)
+			_, _ = fmt.Sscanf(m.confirmInput.Value(), "%d", &idx)
 			if idx < 1 || idx > len(m.backups) {
 				return backupResultMsg{err: fmt.Errorf("invalid backup selection")}
 			}

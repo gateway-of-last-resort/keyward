@@ -34,8 +34,34 @@ archives:
       - SECURITY.md
       - CHANGELOG.md
 
+homebrew_casks:
+  - name: keyward
+    repository:
+      owner: gateway-of-last-resort
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    homepage: "https://github.com/gateway-of-last-resort/keyward"
+    description: "Terminal UI for SSH keys, ~/.ssh/config, security audits, and encrypted backups"
+
 checksum:
   name_template: checksums.txt
+
+# Keyless cosign signature over checksums.txt (Sigstore OIDC in CI). Verifying
+# the signed checksums covers every artifact listed in it.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    output: true
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
 
 changelog:
   use: github

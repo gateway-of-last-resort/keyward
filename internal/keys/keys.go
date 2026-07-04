@@ -114,7 +114,7 @@ func Parse(path string) ([]Key, error) {
 						temp.BitSize = 256
 
 					case *dsa.PrivateKey:
-						temp.BitSize = pk.PublicKey.Parameters.P.BitLen()
+						temp.BitSize = pk.P.BitLen()
 					}
 
 					signer, err := ssh.NewSignerFromKey(rawKey)

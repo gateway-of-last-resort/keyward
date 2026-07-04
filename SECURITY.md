@@ -116,6 +116,30 @@ unlock, so no manual migration is needed.
 - **Backup retention.** Config backups are capped (last 5 kept) to limit how
   many copies of your SSH config linger on disk.
 
+## Verifying releases
+
+Release artifacts are checksummed in `checksums.txt`, which is signed with
+[cosign](https://github.com/sigstore/cosign) using keyless signing (Sigstore
+OIDC — no long-lived signing key). Each release publishes `checksums.txt`,
+`checksums.txt.sig`, and `checksums.txt.pem` alongside the archives.
+
+To verify a download, first check the signature over `checksums.txt`:
+
+```bash
+cosign verify-blob checksums.txt \
+  --signature checksums.txt.sig \
+  --certificate checksums.txt.pem \
+  --certificate-identity-regexp '^https://github.com/gateway-of-last-resort/keyward/\.github/workflows/release\.yml@.*' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+```
+
+A `Verified OK` means `checksums.txt` was produced by this project's release
+workflow. Then confirm your archive matches its listed checksum:
+
+```bash
+sha256sum -c checksums.txt --ignore-missing
+```
+
 ## Dependencies
 
 Keyward keeps its dependency surface small. The only direct dependencies that

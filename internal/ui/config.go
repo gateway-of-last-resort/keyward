@@ -712,14 +712,14 @@ func (m configModel) renderParams(width int) string {
 		}
 		m.addParamInputs[0].Width = inputW
 		m.addParamInputs[1].Width = inputW
-		sb.WriteString(fmt.Sprintf(" %s %s\n",
+		fmt.Fprintf(&sb, " %s %s\n",
 			labelStyle.Render("+ Key  "),
 			m.addParamInputs[0].View(),
-		))
-		sb.WriteString(fmt.Sprintf(" %s %s\n",
+		)
+		fmt.Fprintf(&sb, " %s %s\n",
 			labelStyle.Render("  Value"),
 			m.addParamInputs[1].View(),
-		))
+		)
 		if m.addParamErr != "" {
 			sb.WriteString(formErrorStyle.Render("  ✗  "+m.addParamErr) + "\n")
 		}
