@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-05
+
+A launch-focused release: a demo, trustworthy installs, and contributor
+tooling. No changes to on-disk formats or behavior.
+
+### Added
+
+- A terminal demo GIF in the README, reproducible from a committed `demo.tape`
+  and setup script under `assets/`.
+- Homebrew install: `brew install gateway-of-last-resort/tap/keyward`.
+- Release artifacts: `checksums.txt` is now signed with keyless cosign
+  (Sigstore OIDC); see SECURITY.md for verification steps.
+- `CONTRIBUTING.md` plus issue and pull-request templates.
+- `golangci-lint` runs in CI.
+
+### Fixed
+
+- The release-binary install snippet in the README now resolves the correct
+  OS/arch archive name (the old one failed on macOS and non-amd64 hosts).
+
+### Changed
+
+- README overhaul: a "Why Keyward?" section, a table of contents, and an
+  accurate dependency description (age + x/crypto at the core; the Charm stack
+  for the TUI).
+
 ## [0.2.0] - 2026-07-04
 
 Cryptographic hardening and more honest backups. Existing `master.key` files are
@@ -97,7 +123,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/gateway-of-last-resort/keyward/compare/v0.1.0...v0.1.5
 [0.1.0]: https://github.com/gateway-of-last-resort/keyward/releases/tag/v0.1.0

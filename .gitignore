@@ -33,6 +33,7 @@ go.work.sum
 !SECURITY.md
 !CHANGELOG.md
 !CONTRIBUTING.md
+
 !.github/**/*.md
 # GoReleaser build output
 dist/
