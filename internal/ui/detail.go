@@ -425,7 +425,7 @@ func (m keyDetailModel) view() string {
 	k := m.key
 	var sb strings.Builder
 
-	title := sectionHeaderStyle.Width(m.width - 2).Render(
+	title := sectionHeaderStyle.Width(m.width).Render(
 		"Key: " + fitLeft(k.PrivateKeyPath, m.width-10),
 	)
 	sb.WriteString(title + "\n\n")
@@ -462,7 +462,7 @@ func (m keyDetailModel) view() string {
 	}
 
 	if m.addingAgent {
-		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Add to ssh-agent") + "\n\n")
+		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Add to ssh-agent") + "\n\n")
 		fmt.Fprintf(&sb, "%s  %s\n", detailLabelStyle.Render("Passphrase"), m.agentPass.View())
 		if m.agentPassErr != "" {
 			sb.WriteString("\n" + warnMsgStyle.Render(m.agentPassErr))
@@ -472,7 +472,7 @@ func (m keyDetailModel) view() string {
 	}
 
 	if m.editing {
-		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Edit Metadata") + "\n\n")
+		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Edit Metadata") + "\n\n")
 		sb.WriteString(m.viewEditTags())
 		sb.WriteString("\n\n")
 		sb.WriteString(m.viewEditNote())
@@ -482,7 +482,7 @@ func (m keyDetailModel) view() string {
 	}
 
 	if m.meta != nil {
-		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Metadata") + "\n")
+		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Metadata") + "\n")
 		if !m.meta.LastRotatedAt.IsZero() {
 			field("Last rotated", m.meta.LastRotatedAt.Format("2006-01-02 15:04:05"))
 		}
@@ -509,7 +509,7 @@ func (m keyDetailModel) view() string {
 	}
 
 	if len(m.findings) > 0 {
-		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Findings") + "\n")
+		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Findings") + "\n")
 		for _, f := range m.findings {
 			s := severityStyle[f.Severity]
 			fmt.Fprintf(&sb, "  %s  %s\n", s.Render(fmt.Sprintf("%-8s", string(f.Severity))), f.Message)
@@ -531,7 +531,7 @@ func (m keyDetailModel) view() string {
 
 func (m keyDetailModel) viewRotateForm() string {
 	var sb strings.Builder
-	sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Rotate Key") + "\n\n")
+	sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Rotate Key") + "\n\n")
 
 	inputWidth := m.width - 26
 	if inputWidth < 20 {

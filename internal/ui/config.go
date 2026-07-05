@@ -58,11 +58,9 @@ func newConfigModel(cfg *config.Config, sshDir string) configModel {
 	addBlock := textinput.New()
 	addBlock.Placeholder = "host pattern  (e.g. myserver)"
 	addBlock.CharLimit = 128
-	addBlock.Prompt = ""
 
 	rename := textinput.New()
 	rename.CharLimit = 128
-	rename.Prompt = ""
 
 	addKey := textinput.New()
 	addKey.Placeholder = "key (e.g. IdentityFile)"
@@ -89,6 +87,14 @@ var (
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderBottom(true).
 			BorderForeground(colBorder)
+
+	// paneHeaderDimStyle keeps the underline on the unfocused pane so both
+	// headers always carry their rule.
+	paneHeaderDimStyle = lipgloss.NewStyle().
+				Foreground(colorDim).
+				BorderStyle(lipgloss.NormalBorder()).
+				BorderBottom(true).
+				BorderForeground(colBorder)
 
 	activeBlockStyle = lipgloss.NewStyle().
 				Background(colSelBg).
@@ -211,11 +217,15 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 		case "a":
 			if !m.paneRight {
 				m.confirmDeleteBlock = false
+				m.addBlockInput.Width = m.blockEditWidth()
 				m.addBlockInput.SetValue("")
 				m.addBlockInput.Focus()
 				m.addingBlock = true
 			} else if m.blockCursor < len(m.cfg.Blocks) {
 				m.confirmDeleteParam = false
+				// Width before use so both inputs scroll inside a fixed window.
+				m.addParamInputs[0].Width = m.addParamInputWidth()
+				m.addParamInputs[1].Width = m.addParamInputWidth()
 				m.addParamInputs[0].SetValue("")
 				m.addParamInputs[1].SetValue("")
 				m.addParamInputs[0].Focus()
@@ -226,6 +236,8 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 		case "r":
 			if !m.paneRight && len(m.cfg.Blocks) > 0 {
 				m.confirmDeleteBlock = false
+				// Width before SetValue so scroll offsets use the real window.
+				m.renameInput.Width = m.blockEditWidth()
 				m.renameInput.SetValue(m.cfg.Blocks[m.blockCursor].Pattern)
 				m.renameInput.Focus()
 				m.renamingBlock = true
@@ -236,6 +248,9 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 				blk := &m.cfg.Blocks[m.blockCursor]
 				tok := m.currentToken(blk)
 				if tok != nil && tok.Type == config.PARAM {
+					// Width must be set before SetValue so the input computes
+					// its horizontal scroll offsets against the real window.
+					m.editInput.Width = m.paramEditWidth()
 					m.editInput.SetValue(tok.Value)
 					m.editInput.Focus()
 					m.editing = true
@@ -320,6 +335,9 @@ func (m configModel) updateEdit(msg tea.KeyMsg) (configModel, tea.Cmd) {
 		return m, nil
 	}
 	var cmd tea.Cmd
+	// Keep the window width current (the pane may have been resized mid-edit)
+	// so the input scrolls horizontally instead of overflowing the frame.
+	m.editInput.Width = m.paramEditWidth()
 	m.editInput, cmd = m.editInput.Update(msg)
 	return m, cmd
 }
@@ -344,6 +362,8 @@ func (m configModel) updateAddBlock(msg tea.KeyMsg) (configModel, tea.Cmd) {
 		return m, nil
 	}
 	var cmd tea.Cmd
+	// Keep the window width current so typing scrolls instead of overflowing.
+	m.addBlockInput.Width = m.blockEditWidth()
 	m.addBlockInput, cmd = m.addBlockInput.Update(msg)
 	return m, cmd
 }
@@ -367,6 +387,8 @@ func (m configModel) updateRenameBlock(msg tea.KeyMsg) (configModel, tea.Cmd) {
 		return m, nil
 	}
 	var cmd tea.Cmd
+	// Keep the window width current so typing scrolls instead of overflowing.
+	m.renameInput.Width = m.blockEditWidth()
 	m.renameInput, cmd = m.renameInput.Update(msg)
 	return m, cmd
 }
@@ -418,6 +440,8 @@ func (m configModel) updateAddParam(msg tea.KeyMsg) (configModel, tea.Cmd) {
 		return m, nil
 	}
 	var cmd tea.Cmd
+	// Keep the window width current so typing scrolls instead of overflowing.
+	m.addParamInputs[m.addParamFocus].Width = m.addParamInputWidth()
 	m.addParamInputs[m.addParamFocus], cmd = m.addParamInputs[m.addParamFocus].Update(msg)
 	return m, cmd
 }
@@ -511,7 +535,7 @@ func (m configModel) view() string {
 
 	if m.cfg == nil {
 		cfgPath := filepath.Join(m.sshDir, "config")
-		sb.WriteString(sectionHeaderStyle.Width(m.width-2).Render("SSH Config Editor") + "\n\n")
+		sb.WriteString(sectionHeaderStyle.Width(m.width).Render("SSH Config Editor") + "\n\n")
 		sb.WriteString(dimStyle.Render("  No SSH config found at "+cfgPath) + "\n\n")
 		sb.WriteString(dimStyle.Render("  n  create empty config file"))
 		if m.saveMsg != "" {
@@ -524,15 +548,11 @@ func (m configModel) view() string {
 	if m.cfg.Modified {
 		unsaved = "  " + unsavedStyle.Render("[unsaved]")
 	}
-	sb.WriteString(sectionHeaderStyle.Width(m.width-2).Render(
+	sb.WriteString(sectionHeaderStyle.Width(m.width).Render(
 		"SSH Config  "+dimStyle.Render(m.cfg.Path)+unsaved,
 	) + "\n\n")
 
-	leftW := (m.width - 3) * 3 / 10
-	if leftW < 20 {
-		leftW = 20
-	}
-	rightW := m.width - leftW - 3
+	leftW, rightW := m.paneWidths()
 
 	leftPane := m.renderBlocks(leftW)
 	rightPane := m.renderParams(rightW)
@@ -575,11 +595,71 @@ func (m configModel) view() string {
 	return sb.String()
 }
 
+// paneWidths returns the widths of the Hosts and Parameters panes.
+func (m configModel) paneWidths() (leftW, rightW int) {
+	leftW = (m.width - 3) * 3 / 10
+	if leftW < 20 {
+		leftW = 20
+	}
+	return leftW, m.width - leftW - 3
+}
+
+// wallBuffer keeps every input/value at least this many columns away from the
+// right edge of the pane so nothing ever touches the frame.
+const wallBuffer = 4
+
+// paramValueWidth is the visible window for a parameter value — shared by the
+// static row truncation and the edit input so the value column never moves
+// and never overflows the frame. Layout: 1 (lead) + 20 (key) + 2 (gap) +
+// value + wallBuffer = pane width.
+func (m configModel) paramValueWidth() int {
+	_, rightW := m.paneWidths()
+	w := rightW - 23 - wallBuffer
+	if w < 10 {
+		w = 10
+	}
+	return w
+}
+
+// paramEditWidth is the edit-input window: the "> " prompt takes its 2 columns
+// out of the value window, so the row ends where the static row ends.
+func (m configModel) paramEditWidth() int {
+	return m.paramValueWidth() - 2
+}
+
+// addParamInputWidth sizes the add-param key/value inputs. Layout: 1 (lead) +
+// 7 (label) + 1 (gap) + 2 ("> " prompt) + input + wallBuffer = pane width.
+func (m configModel) addParamInputWidth() int {
+	_, rightW := m.paneWidths()
+	w := rightW - 11 - wallBuffer
+	if w < 10 {
+		w = 10
+	}
+	return w
+}
+
+// blockNameWidth is the visible window for a host pattern in the Hosts pane.
+// Layout: 2 (indent) + name + 2 (buffer to the pane divider) = pane width.
+func (m configModel) blockNameWidth() int {
+	leftW, _ := m.paneWidths()
+	w := leftW - 4
+	if w < 8 {
+		w = 8
+	}
+	return w
+}
+
+// blockEditWidth is the rename/add input window: the "> " prompt takes its
+// 2 columns out of the name window, so the row ends where a static row does.
+func (m configModel) blockEditWidth() int {
+	return m.blockNameWidth() - 2
+}
+
 func (m configModel) renderBlocks(width int) string {
 	focused := !m.paneRight
 	header := paneHeaderStyle.Width(width).Render("Hosts")
 	if !focused {
-		header = dimStyle.Width(width).Render("Hosts")
+		header = paneHeaderDimStyle.Width(width).Render("Hosts")
 	}
 
 	var sb strings.Builder
@@ -604,10 +684,12 @@ func (m configModel) renderBlocks(width int) string {
 	for i := start; i < end; i++ {
 		b := m.cfg.Blocks[i]
 		if m.renamingBlock && focused && i == m.blockCursor {
-			m.renameInput.Width = width - 2
-			sb.WriteString(m.renameInput.View() + "\n")
+			// Indent as a static row; the "> " prompt takes 2 columns out of
+			// the name window so the row never reaches the pane divider.
+			m.renameInput.Width = m.blockEditWidth()
+			sb.WriteString("  " + m.renameInput.View() + "\n")
 		} else {
-			row := "  " + b.Pattern
+			row := "  " + fitRight(b.Pattern, m.blockNameWidth())
 			switch {
 			case focused && i == m.blockCursor:
 				row = activeBlockStyle.Width(width).Render(row)
@@ -624,8 +706,8 @@ func (m configModel) renderBlocks(width int) string {
 	}
 
 	if m.addingBlock {
-		m.addBlockInput.Width = width - 2
-		sb.WriteString(m.addBlockInput.View() + "\n")
+		m.addBlockInput.Width = m.blockEditWidth()
+		sb.WriteString("  " + m.addBlockInput.View() + "\n")
 	}
 
 	return sb.String()
@@ -635,7 +717,7 @@ func (m configModel) renderParams(width int) string {
 	focused := m.paneRight
 	header := paneHeaderStyle.Width(width).Render("Parameters")
 	if !focused {
-		header = dimStyle.Width(width).Render("Parameters")
+		header = paneHeaderDimStyle.Width(width).Render("Parameters")
 	}
 
 	var sb strings.Builder
@@ -665,10 +747,7 @@ func (m configModel) renderParams(width int) string {
 		end = len(tokens)
 	}
 
-	valueW := width - 24
-	if valueW < 10 {
-		valueW = 10
-	}
+	valueW := m.paramValueWidth()
 
 	for i := start; i < end; i++ {
 		t := tokens[i]
@@ -678,17 +757,22 @@ func (m configModel) renderParams(width int) string {
 		var row string
 		switch {
 		case isEditing:
-			m.editInput.Width = valueW
+			// The "> " prompt takes its 2 columns out of the value window
+			// (paramEditWidth), so the row ends exactly where a static row does.
+			m.editInput.Width = m.paramEditWidth()
 			row = fmt.Sprintf(" %s  %s",
 				editingParamStyle.Render(fmt.Sprintf("%-20s", t.Key)),
 				m.editInput.View(),
 			)
 		case t.Type == config.COMMENT:
-			row = fmt.Sprintf(" %s", commentedStyle.Render(t.Raw))
+			row = fmt.Sprintf(" %s", commentedStyle.Render(fitRight(t.Raw, width-1)))
 		default:
+			// Truncate to the same width as the edit window so an overlong
+			// value can never push the frame out, and the value column lines
+			// up whether it's being shown or edited.
 			row = fmt.Sprintf(" %s  %s",
 				paramKeyStyle.Render(fmt.Sprintf("%-20s", t.Key)),
-				t.Value,
+				fitRight(t.Value, valueW),
 			)
 		}
 
@@ -706,10 +790,7 @@ func (m configModel) renderParams(width int) string {
 	}
 
 	if m.addingParam {
-		inputW := width - 10
-		if inputW < 10 {
-			inputW = 10
-		}
+		inputW := m.addParamInputWidth()
 		m.addParamInputs[0].Width = inputW
 		m.addParamInputs[1].Width = inputW
 		fmt.Fprintf(&sb, " %s %s\n",

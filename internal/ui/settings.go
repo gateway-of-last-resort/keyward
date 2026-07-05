@@ -288,7 +288,7 @@ func (m settingsModel) clearPassInputs() settingsModel {
 
 func (m settingsModel) view() string {
 	var sb strings.Builder
-	sb.WriteString(sectionHeaderStyle.Width(m.width - 2).Render("Settings"))
+	sb.WriteString(sectionHeaderStyle.Width(m.width).Render("Settings"))
 	sb.WriteString("\n\n")
 
 	switch m.step {

@@ -249,7 +249,7 @@ var inputLabels = [inCount]string{
 func (m generateModel) view() string {
 	var sb strings.Builder
 
-	sb.WriteString(sectionHeaderStyle.Width(m.width-2).Render("Generate SSH Key") + "\n\n")
+	sb.WriteString(sectionHeaderStyle.Width(m.width).Render("Generate SSH Key") + "\n\n")
 
 	if m.submitting {
 		sb.WriteString(m.spinner.View() + "  " + dimStyle.Render("Generating key...") + "\n")

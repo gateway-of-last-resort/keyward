@@ -184,7 +184,7 @@ func (m keyListModel) view() string {
 		colBits, "Bits",
 		"Status",
 	)
-	header := sectionHeaderStyle.PaddingLeft(0).Width(m.width - 2).Render(hdr)
+	header := sectionHeaderStyle.PaddingLeft(0).Width(m.width).Render(hdr)
 
 	// available rows = height minus header (2) minus search bar (2)
 	maxRows := m.height - 4
@@ -279,6 +279,18 @@ func fitLeft(s string, n int) string {
 		return s
 	}
 	return "…" + string(runes[len(runes)-(n-1):])
+}
+
+// fitRight shortens s to n runes, appending "…" if truncated (keeps the head).
+func fitRight(s string, n int) string {
+	if n <= 1 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n-1]) + "…"
 }
 
 // pad right-pads s to width w.

@@ -8,10 +8,12 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/gateway-of-last-resort/keyward/internal/config"
 	"github.com/gateway-of-last-resort/keyward/internal/keys"
@@ -916,3 +918,124 @@ func TestDetail_AddToAgentAlreadyLoaded(t *testing.T) {
 		t.Fatal("'A' on an already-loaded key should do nothing")
 	}
 }
+
+// fitRight keeps the head of a string and appends "…" only when it overflows.
+func TestFitRight(t *testing.T) {
+	cases := []struct {
+		name string
+		s    string
+		n    int
+		want string
+	}{
+		{"fits exactly", "82.70.50.109", 12, "82.70.50.109"},
+		{"shorter than n", "60", 12, "60"},
+		{"truncated", "/Users/weiqur/.ssh/some-really-long-identity-file", 12, "/Users/weiq…"},
+		{"n too small returns input", "value", 1, "value"},
+		{"empty", "", 12, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fitRight(tc.s, tc.n)
+			if got != tc.want {
+				t.Fatalf("fitRight(%q, %d) = %q, want %q", tc.s, tc.n, got, tc.want)
+			}
+			if tc.n > 1 && len([]rune(got)) > tc.n {
+				t.Fatalf("result %q exceeds width %d", got, tc.n)
+			}
+		})
+	}
+}
+
+// Editing an overlong value must scroll horizontally inside a fixed window —
+// no rendered line may ever exceed the pane width and push the frame out.
+func TestConfig_LongValueNeverOverflows(t *testing.T) {
+	cfg, dir := loadConfig(t)
+	m := newConfigModel(cfg, dir)
+	m.width, m.height = 100, 20
+
+	long := strings.Repeat("very-long-proxy-command-", 8) // ~192 chars
+	m.cfg.Blocks[1].Tokens[2].Value = long                // myserver → HostName
+
+	// Static view: the value is truncated with a trailing ellipsis.
+	m, _ = m.update(k("down")) // select "myserver"
+	m, _ = m.update(k("enter"))
+	for _, line := range strings.Split(m.view(), "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("static view line overflows: width %d > %d\n%q", w, m.width, line)
+		}
+	}
+	if !strings.Contains(m.view(), "…") {
+		t.Fatal("static view should truncate the long value with an ellipsis")
+	}
+
+	// Edit mode: the input window is fixed; typing and cursor movement scroll
+	// the value instead of widening the row.
+	m, _ = m.update(k("e"))
+	if !m.editing {
+		t.Fatal("expected edit mode")
+	}
+	if m.editInput.Width <= 0 {
+		t.Fatal("editInput.Width must be set on edit start for horizontal scrolling")
+	}
+	m, _ = m.update(k("x")) // type at the end
+	for _, line := range strings.Split(m.view(), "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("edit view line overflows: width %d > %d\n%q", w, m.width, line)
+		}
+	}
+	m, _ = m.update(k("esc"))
+
+	// Add-param form: a long value typed into the inputs scrolls too.
+	m, _ = m.update(k("a"))
+	m, _ = m.update(k("ProxyCommand"))
+	m, _ = m.update(k("tab"))
+	m, _ = m.update(k(long))
+	if m.addParamInputs[1].Width <= 0 {
+		t.Fatal("add-param input width must be set for horizontal scrolling")
+	}
+	for _, line := range strings.Split(m.view(), "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("add-param view line overflows: width %d > %d\n%q", w, m.width, line)
+		}
+	}
+	m, _ = m.update(k("esc"))
+
+	// Hosts pane: renaming to / adding an overlong pattern scrolls inside the
+	// pane and never pushes the divider; a long static name is truncated.
+	m, _ = m.update(k("esc")) // back to left pane
+	m, _ = m.update(k("r"))
+	if m.renameInput.Width <= 0 {
+		t.Fatal("rename input width must be set for horizontal scrolling")
+	}
+	m, _ = m.update(k(long))
+	hostsPaneOverflow(t, m)
+	m, _ = m.update(k("enter")) // commit rename → long static name
+	hostsPaneOverflow(t, m)
+
+	m, _ = m.update(k("a"))
+	m, _ = m.update(k(long))
+	hostsPaneOverflow(t, m)
+}
+
+// hostsPaneOverflow asserts no view line spills past the Hosts pane into the
+// divider column.
+func hostsPaneOverflow(t *testing.T, m configModel) {
+	t.Helper()
+	leftW, _ := m.paneWidths()
+	for _, line := range strings.Split(m.view(), "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("view line overflows frame: width %d > %d\n%q", w, m.width, line)
+		}
+		// Every joined line must still carry the divider at column leftW+1.
+		plain := []rune(stripANSI(line))
+		if strings.ContainsRune(string(plain), '│') && len(plain) > leftW &&
+			!strings.HasPrefix(strings.TrimLeft(string(plain[leftW:]), " "), "│") {
+			t.Fatalf("divider shifted from column %d:\n%q", leftW+1, string(plain))
+		}
+	}
+}
+
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// stripANSI removes SGR escape sequences so columns can be counted.
+func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
