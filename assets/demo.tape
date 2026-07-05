@@ -1,4 +1,4 @@
-# keyward full demo — setup → keys/detail/metadata → audit → config editing → generate → backup
+# keyward full demo — setup → keys/detail/metadata → audit → config editing → generate → known hosts → backup
 Output demo.gif
 
 Set Shell "bash"
@@ -12,7 +12,7 @@ Set TypingSpeed 45ms
 
 # --- hidden: sandbox HOME + truecolor so the gradient renders smoothly ---
 Hide
-Type `export HOME="/tmp/dev"; export COLORTERM=truecolor; export PS1="$ "; cd "$HOME"; clear`
+Type `export HOME="/tmp/dev"; export COLORTERM=truecolor; export PS1="$ "; eval "$(ssh-agent -s)" >/dev/null; cd "$HOME"; clear`
 Enter
 Sleep 500ms
 Show
@@ -51,6 +51,10 @@ Type "legacy deploy key, rotate soon"
 Sleep 500ms
 Ctrl+S
 Sleep 1100ms
+
+# ── load this key into the ssh-agent (passphrase-less → loads at once) ────
+Type "A"
+Sleep 1600ms
 Escape
 Sleep 700ms
 
@@ -132,13 +136,27 @@ Sleep 350ms
 Enter
 Sleep 2200ms
 
+# ── known hosts: browse entries, forget one ──────────────────────────────
+# generate returns to the Keys screen; tab across to Known Hosts (now between
+# Generate and Backup in the tab bar).
+Tab
+Sleep 250ms
+Tab
+Sleep 250ms
+Tab
+Sleep 250ms
+Tab
+Sleep 1000ms
+Down
+Sleep 500ms
+Down
+Sleep 700ms
+Type "d"
+Sleep 950ms
+Type "d"
+Sleep 1300ms
+
 # ── encrypted backup of ~/.ssh ───────────────────────────────────────────
-Tab
-Sleep 250ms
-Tab
-Sleep 250ms
-Tab
-Sleep 250ms
 Tab
 Sleep 700ms
 Type "b"
