@@ -58,10 +58,13 @@ func Run(allKeys []keys.Key, cfg *config.Config, sshDir string) AuditReport {
 		checkStrictHostKeyChecking,
 		checkIdentityFileExists,
 		newCheckKeyLinkedToHost(allKeys),
+		checkForwardAgent,
+		checkUserKnownHostsDevNull,
 	}
 
 	systemChecks := []SystemCheck{
 		newCheckSSHDirPermissions(sshDir),
+		newCheckConfigPermissions(sshDir),
 		checkSSHAgent,
 	}
 

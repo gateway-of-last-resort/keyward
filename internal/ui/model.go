@@ -12,10 +12,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	kagent "github.com/gateway-of-last-resort/keyward/internal/agent"
 	"github.com/gateway-of-last-resort/keyward/internal/audit"
 	"github.com/gateway-of-last-resort/keyward/internal/config"
 	"github.com/gateway-of-last-resort/keyward/internal/keys"
 	"github.com/gateway-of-last-resort/keyward/internal/storage"
+	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
 // Screen identifies the active TUI screen.
@@ -63,8 +65,13 @@ type Model struct {
 	backupView   backupModel
 	settingsView settingsModel
 
-	// non-fatal error shown in status bar
-	err error
+	// fingerprints currently loaded in the ssh-agent (empty if none/no agent)
+	agentLoaded map[string]bool
+
+	// non-fatal error shown in status bar; errToken guards the auto-dismiss
+	// timer so a stale tick can't clear a newer error early.
+	err      error
+	errToken int
 }
 
 // New creates a ready-to-run Model.
@@ -97,7 +104,7 @@ func New(k []keys.Key, cfg *config.Config, report audit.AuditReport, sshDir, vau
 		unlockView:    unlockView,
 		settingsView:  newSettingsModel(masterKeyPath, sshDir, vaultDir),
 	}
-	m.keyList = newKeyListModel(k, report.Results)
+	m.keyList = newKeyListModel(k, report.Results, sshDir)
 	return m
 }
 
@@ -112,6 +119,19 @@ type navigateMsg struct {
 // errMsg delivers a non-fatal error to the status bar.
 type errMsg struct{ err error }
 
+// clearErrMsg dismisses the status-bar error banner; token must match the
+// current errToken or the tick is stale and ignored.
+type clearErrMsg struct{ token int }
+
+// errBannerTimeout is how long a non-fatal error lingers before auto-dismissing.
+const errBannerTimeout = 4 * time.Second
+
+func clearErrAfter(token int) tea.Cmd {
+	return tea.Tick(errBannerTimeout, func(time.Time) tea.Msg {
+		return clearErrMsg{token: token}
+	})
+}
+
 // keysReloadedMsg carries refreshed keys, config, and audit report after an SSH dir change.
 // sshDir is the directory that was scanned; err is non-nil when the scan failed,
 // in which case keys/cfg/report are unset and the previous state must be kept.
@@ -125,6 +145,20 @@ type keysReloadedMsg struct {
 
 // keyGeneratedMsg is emitted when a new key has been created.
 type keyGeneratedMsg struct{ key keys.Key }
+
+// keyImportedMsg is emitted after an external key is copied into the SSH dir.
+type keyImportedMsg struct{ key keys.Key }
+
+// importKeyCmd imports the private key at path into sshDir with secure perms.
+func importKeyCmd(sshDir, path string) tea.Cmd {
+	return func() tea.Msg {
+		k, err := keys.ImportKey(sshDir, path, keys.ImportOptions{})
+		if err != nil {
+			return errMsg{err}
+		}
+		return keyImportedMsg{key: k}
+	}
+}
 
 // keyRotatedMsg is emitted after a successful key rotation.
 type keyRotatedMsg struct {
@@ -197,7 +231,44 @@ func (m Model) prevTab() tea.Cmd {
 // --- Bubble Tea interface ---
 
 // Init satisfies tea.Model.
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd { return refreshAgentCmd() }
+
+// agentLoadedMsg carries the fingerprints currently loaded in the ssh-agent.
+type agentLoadedMsg struct{ loaded map[string]bool }
+
+// agentAddedMsg is emitted after a key is loaded into the ssh-agent.
+type agentAddedMsg struct{}
+
+// refreshAgentCmd queries the ssh-agent for its loaded fingerprints. A missing
+// agent is not an error — it just yields an empty set.
+func refreshAgentCmd() tea.Cmd {
+	return func() tea.Msg {
+		loaded, err := kagent.LoadedFingerprints()
+		if err != nil {
+			return agentLoadedMsg{loaded: map[string]bool{}}
+		}
+		return agentLoadedMsg{loaded: loaded}
+	}
+}
+
+// addToAgentCmd loads key into the ssh-agent, decrypting with passphrase if set.
+func addToAgentCmd(key keys.Key, passphrase []byte) tea.Cmd {
+	return func() tea.Msg {
+		pem, err := os.ReadFile(key.PrivateKeyPath)
+		if err != nil {
+			return errMsg{err}
+		}
+		defer crypto.ZeroBytes(pem)
+		comment := key.Comment
+		if comment == "" {
+			comment = filepath.Base(key.PrivateKeyPath)
+		}
+		if err := kagent.Add(pem, passphrase, comment); err != nil {
+			return errMsg{err}
+		}
+		return agentAddedMsg{}
+	}
+}
 
 // Update satisfies tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -213,16 +284,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "q":
-			// quit only from the keys list (and not while searching)
-			if m.active == ScreenKeys && !m.keyList.searching {
+			// quit only from the keys list (and not while typing a query/path)
+			if m.active == ScreenKeys && !m.keyList.searching && !m.keyList.importing {
 				return m, tea.Quit
 			}
 		}
 		// Tab / Shift+Tab cycle tabs globally, but not on auth or detail screens,
-		// and not when a config editor input is active (Tab switches key↔value fields there).
+		// not when a config editor input is active (Tab switches key↔value fields there),
+		// and not while typing in the key list (search/import).
 		cfgBusy := m.active == ScreenConfig && m.cfgEditor.isBusy()
 		settingsBusy := m.active == ScreenSettings && m.settingsView.step != settingsMenu
-		if !cfgBusy && !settingsBusy && m.active != ScreenDetail && m.active != ScreenSetup && m.active != ScreenUnlock {
+		keysBusy := m.active == ScreenKeys && (m.keyList.searching || m.keyList.importing)
+		if !cfgBusy && !settingsBusy && !keysBusy && m.active != ScreenDetail && m.active != ScreenSetup && m.active != ScreenUnlock {
 			switch msg.String() {
 			case "tab":
 				return m, m.nextTab()
@@ -246,12 +319,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.err = msg.err
+		m.errToken++
+		return m, clearErrAfter(m.errToken)
+
+	case clearErrMsg:
+		if msg.token == m.errToken {
+			m.err = nil
+		}
 		return m, nil
+
+	case agentLoadedMsg:
+		m.agentLoaded = msg.loaded
+		if m.active == ScreenDetail {
+			m.keyDetail.inAgent = m.agentLoaded[m.keyDetail.key.Fingerprint]
+		}
+		return m, nil
+
+	case agentAddedMsg:
+		// Re-query the agent so the "loaded" status reflects the new key.
+		return m, refreshAgentCmd()
 
 	case keyGeneratedMsg:
 		m.keys = append(m.keys, msg.key)
 		m.report = audit.Run(m.keys, m.cfg, m.sshDir)
-		m.keyList = newKeyListModel(m.keys, m.report.Results)
+		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
 		if m.store != nil && msg.key.Fingerprint != "" {
 			_ = storage.Put(m.store, storage.KeyMetadata{
 				Fingerprint: msg.key.Fingerprint,
@@ -261,6 +352,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.saveStore(), navigate(ScreenKeys))
 		}
 		return m, navigate(ScreenKeys)
+
+	case keyImportedMsg:
+		m.keys = append(m.keys, msg.key)
+		m.report = audit.Run(m.keys, m.cfg, m.sshDir)
+		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
+		// Rebuilding the list drops its width/height; push them back so the
+		// viewport doesn't collapse to a single row.
+		m = m.propagateSize()
+		if m.store != nil && msg.key.Fingerprint != "" {
+			_ = storage.Put(m.store, storage.KeyMetadata{
+				Fingerprint: msg.key.Fingerprint,
+				Tags:        []string{},
+				LinkedHosts: []string{},
+			})
+			return m, m.saveStore()
+		}
+		return m, nil
 
 	case keyRotatedMsg:
 		for i, k := range m.keys {
@@ -288,7 +396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.report = audit.Run(m.keys, m.cfg, m.sshDir)
-		m.keyList = newKeyListModel(m.keys, m.report.Results)
+		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
 		var rotCmds []tea.Cmd
 		if m.store != nil {
 			rotCmds = append(rotCmds, m.saveStore())
@@ -321,7 +429,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// refresh detail with updated metadata
 			for _, k := range m.keys {
 				if k.PrivateKeyPath == msg.key.PrivateKeyPath {
-					m.keyDetail = newKeyDetailModel(k, m.report.Results, m.store)
+					m.keyDetail = newKeyDetailModel(k, m.report.Results, m.store, m.agentLoaded[k.Fingerprint])
 					break
 				}
 			}
@@ -341,7 +449,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.report = audit.Run(m.keys, m.cfg, m.sshDir)
-		m.keyList = newKeyListModel(m.keys, m.report.Results)
+		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
 		var delCmds []tea.Cmd
 		if m.store != nil {
 			delCmds = append(delCmds, m.saveStore())
@@ -368,7 +476,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.report = msg.report
 		m.cfg = msg.cfg // nil if no config found at new SSH dir
 		m.cfgEditor = newConfigModel(m.cfg, m.sshDir)
-		m.keyList = newKeyListModel(m.keys, m.report.Results)
+		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
 		// Persist the SSH dir only after a successful scan.
 		return m, m.savePrefs()
 
@@ -412,7 +520,7 @@ func (m Model) navigate(msg navigateMsg) (Model, tea.Cmd) {
 	switch msg.to {
 	case ScreenDetail:
 		if msg.keyIndex >= 0 && msg.keyIndex < len(m.keys) {
-			m.keyDetail = newKeyDetailModel(m.keys[msg.keyIndex], m.report.Results, m.store)
+			m.keyDetail = newKeyDetailModel(m.keys[msg.keyIndex], m.report.Results, m.store, m.agentLoaded[m.keys[msg.keyIndex].Fingerprint])
 		}
 	case ScreenAudit:
 		m.auditView = newAuditModel(m.report)
@@ -613,9 +721,9 @@ func screenHint(s Screen) string {
 	case ScreenUnlock:
 		return "enter  unlock  ·  ctrl+c quit"
 	case ScreenKeys:
-		return "↑/↓ navigate  ·  enter detail  ·  / search  ·  q quit  ·  " + nav
+		return "↑/↓ navigate  ·  enter detail  ·  / search  ·  i import  ·  q quit  ·  " + nav
 	case ScreenDetail:
-		return "c copy pubkey  ·  e edit metadata  ·  r rotate  ·  d delete  ·  esc back"
+		return "c copy pubkey  ·  e edit  ·  A add to agent  ·  r rotate  ·  d delete  ·  esc back"
 	case ScreenAudit:
 		return "↑/↓ navigate  ·  esc  back  · " + nav
 	case ScreenGenerate:

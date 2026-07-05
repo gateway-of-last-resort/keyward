@@ -6,6 +6,14 @@ linters:
   default: standard
   enable:
     - misspell
+  settings:
+    errcheck:
+      # Writes to stdout/stderr/buffers in the CLI layer: a failed terminal
+      # write is not actionable. (errcheck already excludes fmt.Fprintf.)
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
   exclusions:
     rules:
       # crypto/dsa is deprecated, but we import it deliberately to recognize and

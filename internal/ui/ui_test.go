@@ -116,7 +116,7 @@ func TestNav_QQuitsFromKeys(t *testing.T) {
 // §4.8 — q while searching types the letter instead of quitting.
 func TestNav_QDoesNotQuitWhileSearching(t *testing.T) {
 	m := Model{active: ScreenKeys}
-	m.keyList = newKeyListModel(nil, nil)
+	m.keyList = newKeyListModel(nil, nil, "")
 	m.keyList.searching = true
 	next, cmd := m.Update(k("q"))
 	m = next.(Model)
@@ -138,7 +138,7 @@ func keyFixture() []keys.Key {
 }
 
 func TestKeys_SearchFilters(t *testing.T) { // §4.4
-	m := newKeyListModel(keyFixture(), nil)
+	m := newKeyListModel(keyFixture(), nil, "")
 	m.searching = true
 	m, _ = m.update(k("rsa"))
 	vis := m.visible()
@@ -149,7 +149,7 @@ func TestKeys_SearchFilters(t *testing.T) { // §4.4
 
 // §4.5 — backspace deletes whole runes (UTF-8), never panics on multibyte input.
 func TestKeys_SearchBackspaceByRune(t *testing.T) {
-	m := newKeyListModel(keyFixture(), nil)
+	m := newKeyListModel(keyFixture(), nil, "")
 	m.searching = true
 	m, _ = m.update(k("rs😀"))
 	if m.query != "rs😀" {
@@ -167,7 +167,7 @@ func TestKeys_SearchBackspaceByRune(t *testing.T) {
 
 func TestKeys_SearchEscClearsEnterKeeps(t *testing.T) { // §4.6
 	// Enter exits search but keeps the filter.
-	m := newKeyListModel(keyFixture(), nil)
+	m := newKeyListModel(keyFixture(), nil, "")
 	m.searching = true
 	m, _ = m.update(k("rsa"))
 	m, _ = m.update(k("enter"))
@@ -181,6 +181,60 @@ func TestKeys_SearchEscClearsEnterKeeps(t *testing.T) { // §4.6
 	}
 	if len(m.visible()) != 2 {
 		t.Fatalf("after clear, all keys visible; got %d", len(m.visible()))
+	}
+}
+
+// §4.9 — 'i' opens an inline import prompt; typing edits the path, esc cancels.
+func TestKeys_ImportModeToggle(t *testing.T) {
+	m := newKeyListModel(keyFixture(), nil, "/tmp/ssh")
+	m, _ = m.update(k("i"))
+	if !m.importing {
+		t.Fatal("'i' should enter import mode")
+	}
+	m, _ = m.update(k("key"))
+	if m.importPath != "key" {
+		t.Fatalf("import path = %q, want %q", m.importPath, "key")
+	}
+	m, _ = m.update(k("esc"))
+	if m.importing || m.importPath != "" {
+		t.Fatalf("esc should cancel import: importing=%v path=%q", m.importing, m.importPath)
+	}
+}
+
+// Enter with an empty path just closes the prompt without running a command.
+func TestKeys_ImportEmptyPathCancels(t *testing.T) {
+	m := newKeyListModel(keyFixture(), nil, "/tmp/ssh")
+	m, _ = m.update(k("i"))
+	m, cmd := m.update(k("enter"))
+	if m.importing {
+		t.Fatal("enter should exit import mode")
+	}
+	if cmd != nil {
+		t.Fatalf("empty path should not trigger a command; got %T", runCmd(cmd))
+	}
+}
+
+// Regression: rebuilding the key list after an import must not collapse its
+// viewport to a single row (it lost width/height before propagateSize was added).
+func TestKeys_ImportKeepsListSize(t *testing.T) {
+	m := Model{active: ScreenKeys, width: 100, height: 40, keys: keyFixture()}
+	m.keyList = newKeyListModel(m.keys, nil, "")
+	m = m.propagateSize()
+	baseline := m.keyList.height
+	if baseline <= 1 {
+		t.Fatalf("baseline list height = %d, want > 1", baseline)
+	}
+
+	next, _ := m.Update(keyImportedMsg{key: keys.Key{
+		PrivateKeyPath: "/home/u/.ssh/imported", Algorithm: "ssh-ed25519", BitSize: 256,
+	}})
+	m = next.(Model)
+
+	if m.keyList.height != baseline {
+		t.Fatalf("list height after import = %d, want %d", m.keyList.height, baseline)
+	}
+	if len(m.keyList.items) != 3 {
+		t.Fatalf("imported key not added: %d items", len(m.keyList.items))
 	}
 }
 
@@ -767,7 +821,7 @@ func TestModel_KeysReloadedErrorKeepsList(t *testing.T) {
 func TestDetail_EditMetadataSaveWithCtrlS(t *testing.T) { // §5.4/5.5
 	kd := newKeyDetailModel(keys.Key{
 		PrivateKeyPath: "/ssh/id_rsa", Algorithm: "ssh-rsa", Fingerprint: "SHA256:test",
-	}, nil, nil)
+	}, nil, nil, false)
 	kd.width = 100
 	kd, _ = kd.update(k("e")) // enter edit mode
 	if !kd.editing {
@@ -798,12 +852,67 @@ func TestDetail_EditMetadataSaveWithCtrlS(t *testing.T) { // §5.4/5.5
 func TestDetail_EnterDoesNotSaveMetadata(t *testing.T) {
 	kd := newKeyDetailModel(keys.Key{
 		PrivateKeyPath: "/ssh/id_rsa", Algorithm: "ssh-rsa", Fingerprint: "SHA256:test",
-	}, nil, nil)
+	}, nil, nil, false)
 	kd.width = 100
 	kd, _ = kd.update(k("e"))
 	kd, _ = kd.update(k("down")) // focus note
 	_, cmd := kd.update(k("enter"))
 	if _, ok := runCmd(cmd).(keyMetaUpdatedMsg); ok {
 		t.Fatal("enter in note field must not save metadata (use ctrl+s)")
+	}
+}
+
+// 'A' on an encrypted key opens a passphrase prompt; empty enter errors, esc cancels.
+func TestDetail_AddToAgentPromptsForPassphrase(t *testing.T) {
+	kd := newKeyDetailModel(keys.Key{
+		PrivateKeyPath: "/ssh/id", Fingerprint: "SHA256:x", HasPassphrase: true,
+	}, nil, nil, false)
+	kd.width = 100
+
+	kd, cmd := kd.update(k("A"))
+	if !kd.addingAgent {
+		t.Fatal("'A' on an encrypted key should open the passphrase prompt")
+	}
+	if cmd != nil {
+		t.Fatal("no command should run until the passphrase is entered")
+	}
+
+	kd, _ = kd.update(k("enter")) // empty passphrase
+	if kd.agentPassErr == "" {
+		t.Fatal("empty passphrase should set an error")
+	}
+
+	kd, _ = kd.update(k("esc"))
+	if kd.addingAgent {
+		t.Fatal("esc should cancel the prompt")
+	}
+}
+
+// 'A' on an unencrypted key issues the add command directly (no prompt).
+func TestDetail_AddToAgentNoPassphrase(t *testing.T) {
+	kd := newKeyDetailModel(keys.Key{
+		PrivateKeyPath: "/ssh/id", Fingerprint: "SHA256:x", HasPassphrase: false,
+	}, nil, nil, false)
+	kd.width = 100
+
+	kd, cmd := kd.update(k("A"))
+	if kd.addingAgent {
+		t.Fatal("an unencrypted key should not open a prompt")
+	}
+	if cmd == nil {
+		t.Fatal("'A' should return an add-to-agent command")
+	}
+}
+
+// 'A' on a key already in the agent is a no-op.
+func TestDetail_AddToAgentAlreadyLoaded(t *testing.T) {
+	kd := newKeyDetailModel(keys.Key{
+		PrivateKeyPath: "/ssh/id", Fingerprint: "SHA256:x", HasPassphrase: true,
+	}, nil, nil, true)
+	kd.width = 100
+
+	kd, cmd := kd.update(k("A"))
+	if kd.addingAgent || cmd != nil {
+		t.Fatal("'A' on an already-loaded key should do nothing")
 	}
 }
