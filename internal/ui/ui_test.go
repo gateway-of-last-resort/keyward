@@ -6,6 +6,8 @@ package ui
 // docs/manual-testing.md; the section numbers are referenced in test names.
 
 import (
+	"crypto/ed25519"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,9 +16,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/gateway-of-last-resort/keyward/internal/config"
 	"github.com/gateway-of-last-resort/keyward/internal/keys"
+	"github.com/gateway-of-last-resort/keyward/internal/knownhosts"
 )
 
 // k builds a tea.KeyMsg whose String() matches what the update funcs switch on.
@@ -90,7 +94,7 @@ func sendRoot(t *testing.T, m Model, key string) (Model, tea.Cmd) {
 
 func TestNav_TabCyclesForward(t *testing.T) {
 	m := Model{active: ScreenKeys}
-	want := []Screen{ScreenAudit, ScreenConfig, ScreenGenerate, ScreenBackup, ScreenSettings, ScreenKeys}
+	want := []Screen{ScreenAudit, ScreenConfig, ScreenGenerate, ScreenKnownHosts, ScreenBackup, ScreenSettings, ScreenKeys}
 	for i, w := range want {
 		m, _ = sendRoot(t, m, "tab")
 		if m.active != w {
@@ -1039,3 +1043,142 @@ var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 // stripANSI removes SGR escape sequences so columns can be counted.
 func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
+
+// ── §11 known_hosts viewer ──────────────────────────────────────────────────
+
+// writeKnownHostsFile writes a known_hosts file with n plain ed25519 entries
+// (hosts host1.example … hostN.example) into a fresh temp SSH dir and returns
+// that dir.
+func writeKnownHostsFile(t *testing.T, n int) string {
+	t.Helper()
+	sshDir := t.TempDir()
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		pub, _, err := ed25519.GenerateKey(nil)
+		if err != nil {
+			t.Fatalf("generate key: %v", err)
+		}
+		sshPub, err := ssh.NewPublicKey(pub)
+		if err != nil {
+			t.Fatalf("ssh.NewPublicKey: %v", err)
+		}
+		line := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
+		fmt.Fprintf(&b, "host%d.example %s\n", i, line)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "known_hosts"), []byte(b.String()), 0o600); err != nil {
+		t.Fatalf("write known_hosts: %v", err)
+	}
+	return sshDir
+}
+
+// khEntries builds n in-memory known_hosts entries for view/nav tests.
+func khEntries(n int) []knownhosts.Entry {
+	out := make([]knownhosts.Entry, n)
+	for i := range out {
+		out[i] = knownhosts.Entry{
+			Hosts:       []string{fmt.Sprintf("host%d.example", i+1)},
+			KeyType:     "ssh-ed25519",
+			Fingerprint: "SHA256:abc",
+			LineNum:     i + 1,
+		}
+	}
+	return out
+}
+
+func TestKnownHosts_NavigatePopulatesFromFile(t *testing.T) {
+	sshDir := writeKnownHostsFile(t, 3)
+	m := Model{active: ScreenKeys, sshDir: sshDir}
+	m, _ = sendRoot(t, m, "tab") // Audit
+	m, _ = sendRoot(t, m, "tab") // Config
+	m, _ = sendRoot(t, m, "tab") // Generate
+	m, _ = sendRoot(t, m, "tab") // Known Hosts
+	if m.active != ScreenKnownHosts {
+		t.Fatalf("active = %v, want ScreenKnownHosts", m.active)
+	}
+	if len(m.knownHosts.entries) != 3 {
+		t.Fatalf("entries = %d, want 3", len(m.knownHosts.entries))
+	}
+}
+
+func TestKnownHosts_ForgetTwoStepConfirm(t *testing.T) {
+	m := knownHostsModel{entries: khEntries(3), path: "irrelevant"}
+
+	// First d arms the confirmation and issues no command.
+	m, cmd := m.update(k("d"))
+	if !m.confirmForget {
+		t.Fatal("first d should arm confirmForget")
+	}
+	if cmd != nil {
+		t.Fatal("first d should not issue a command")
+	}
+
+	// esc cancels the confirmation without navigating away.
+	m, cmd = m.update(k("esc"))
+	if m.confirmForget {
+		t.Fatal("esc should clear confirmForget")
+	}
+	if cmd != nil {
+		t.Fatal("esc that only cancels confirm should not navigate")
+	}
+
+	// d, d issues the forget command.
+	m, _ = m.update(k("d"))
+	m, cmd = m.update(k("d"))
+	if m.confirmForget {
+		t.Fatal("second d should clear confirmForget")
+	}
+	if cmd == nil {
+		t.Fatal("second d should issue the forget command")
+	}
+}
+
+func TestKnownHosts_ForgetRemovesEntryAndKeepsSize(t *testing.T) {
+	sshDir := writeKnownHostsFile(t, 3)
+	m := Model{active: ScreenKeys, sshDir: sshDir, width: 100, height: 30}
+	m = m.propagateSize()
+	m, _ = sendRoot(t, m, "tab")
+	m, _ = sendRoot(t, m, "tab")
+	m, _ = sendRoot(t, m, "tab")
+	m, _ = sendRoot(t, m, "tab")
+	if m.active != ScreenKnownHosts {
+		t.Fatalf("active = %v, want ScreenKnownHosts", m.active)
+	}
+	m.knownHosts.cursor = 1 // target host2.example
+	wantH := m.knownHosts.height
+
+	// d, d → forget command, then apply its message through the root model.
+	var cmd tea.Cmd
+	m.knownHosts, _ = m.knownHosts.update(k("d"))
+	m.knownHosts, cmd = m.knownHosts.update(k("d"))
+	msg := runCmd(cmd)
+	if _, ok := msg.(khForgotMsg); !ok {
+		t.Fatalf("expected khForgotMsg, got %T", msg)
+	}
+	next, _ := m.Update(msg)
+	m = next.(Model)
+
+	if len(m.knownHosts.entries) != 2 {
+		t.Fatalf("entries after forget = %d, want 2", len(m.knownHosts.entries))
+	}
+	for _, e := range m.knownHosts.entries {
+		if e.Hosts[0] == "host2.example" {
+			t.Fatal("host2.example should have been forgotten")
+		}
+	}
+	if m.knownHosts.height != wantH || m.knownHosts.width == 0 {
+		t.Fatalf("size not retained after forget: w=%d h=%d (want h=%d)",
+			m.knownHosts.width, m.knownHosts.height, wantH)
+	}
+}
+
+func TestKnownHosts_EmptyScreenNoCrash(t *testing.T) {
+	m := knownHostsModel{width: 80, height: 20}
+	// d on an empty list is a no-op and must not panic.
+	m, cmd := m.update(k("d"))
+	if cmd != nil || m.confirmForget {
+		t.Fatal("d on empty list should do nothing")
+	}
+	if !strings.Contains(m.view(), "no known_hosts entries") {
+		t.Fatalf("empty view missing placeholder:\n%s", m.view())
+	}
+}
