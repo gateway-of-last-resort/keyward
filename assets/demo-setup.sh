@@ -44,6 +44,18 @@ EOF
 	chmod 600 "$SSH/config"
 }
 
+# Build a known_hosts file from the seed public keys so the Known Hosts screen
+# has real, parseable entries to browse and "forget" in the demo.
+write_known_hosts() {
+	: > "$SSH/known_hosts"
+	{
+		printf 'github.com '; cat "$SSH/github_ed25519.pub"
+		printf '203.0.113.10 '; cat "$SSH/prod_rsa.pub"
+		printf '198.51.100.5,staging '; cat "$SSH/id_ed25519.pub"
+	} >> "$SSH/known_hosts"
+	chmod 600 "$SSH/known_hosts"
+}
+
 # --reset: drop recording artifacts (vault, generated key, backups) and restore
 # the pristine config, but keep the seed keys so you can re-record immediately.
 if [[ "${1:-}" == "--reset" ]]; then
@@ -51,6 +63,7 @@ if [[ "${1:-}" == "--reset" ]]; then
 	rm -f "$SSH/ci_ed25519" "$SSH/ci_ed25519.pub"
 	rm -f "$SSH/config.bak" "$SSH"/*.pre-restore 2>/dev/null || true
 	write_config
+	write_known_hosts
 	echo "sandbox reset OK ($SB)"
 	exit 0
 fi
@@ -67,4 +80,5 @@ ssh-keygen -t rsa -b 2048 -C "deploy@server" -N "" -f "$SSH/prod_rsa"           
 chmod 600 "$SSH"/id_ed25519 "$SSH"/github_ed25519 "$SSH"/prod_rsa
 
 write_config
+write_known_hosts
 echo "sandbox built OK ($SB) — record with: cd assets && HOME=$SB vhs demo.tape"

@@ -100,8 +100,25 @@ var (
 	editSectionStyle = lipgloss.NewStyle().
 				Foreground(ColorLavender).
 				Bold(true)
-	editHintStyle = lipgloss.NewStyle().Foreground(colorDim)
 )
+
+// hints returns the context-sensitive key hints for the status bar so the
+// detail screen shows one hint line (in the bar) rather than a second copy
+// rendered under the form.
+func (m keyDetailModel) hints() string {
+	switch {
+	case m.addingAgent:
+		return "enter  add  ·  esc  cancel"
+	case m.confirmRotate:
+		return "tab / shift+tab  navigate  ·  enter  next / confirm  ·  esc  cancel"
+	case m.editing:
+		return "↑/↓  switch fields  ·  space  toggle tag  ·  tab  indent  ·  ctrl+s  save  ·  esc  cancel"
+	case m.confirmDelete:
+		return "d  confirm delete  ·  esc  cancel"
+	default:
+		return "c copy pubkey  ·  e edit  ·  A add to agent  ·  r rotate  ·  d delete  ·  esc back"
+	}
+}
 
 func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -425,7 +442,7 @@ func (m keyDetailModel) view() string {
 	k := m.key
 	var sb strings.Builder
 
-	title := sectionHeaderStyle.Width(m.width - 2).Render(
+	title := sectionHeaderStyle.Width(m.width).Render(
 		"Key: " + fitLeft(k.PrivateKeyPath, m.width-10),
 	)
 	sb.WriteString(title + "\n\n")
@@ -462,27 +479,24 @@ func (m keyDetailModel) view() string {
 	}
 
 	if m.addingAgent {
-		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Add to ssh-agent") + "\n\n")
+		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Add to ssh-agent") + "\n\n")
 		fmt.Fprintf(&sb, "%s  %s\n", detailLabelStyle.Render("Passphrase"), m.agentPass.View())
 		if m.agentPassErr != "" {
 			sb.WriteString("\n" + warnMsgStyle.Render(m.agentPassErr))
 		}
-		sb.WriteString("\n" + editHintStyle.Render("enter  add · esc  cancel"))
 		return sb.String()
 	}
 
 	if m.editing {
-		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Edit Metadata") + "\n\n")
+		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Edit Metadata") + "\n\n")
 		sb.WriteString(m.viewEditTags())
 		sb.WriteString("\n\n")
 		sb.WriteString(m.viewEditNote())
-		sb.WriteString("\n\n")
-		sb.WriteString(editHintStyle.Render("↑/↓ switch fields · space toggle tag · tab indent · ctrl+s save · esc cancel"))
 		return sb.String()
 	}
 
 	if m.meta != nil {
-		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Metadata") + "\n")
+		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Metadata") + "\n")
 		if !m.meta.LastRotatedAt.IsZero() {
 			field("Last rotated", m.meta.LastRotatedAt.Format("2006-01-02 15:04:05"))
 		}
@@ -509,7 +523,7 @@ func (m keyDetailModel) view() string {
 	}
 
 	if len(m.findings) > 0 {
-		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Findings") + "\n")
+		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Findings") + "\n")
 		for _, f := range m.findings {
 			s := severityStyle[f.Severity]
 			fmt.Fprintf(&sb, "  %s  %s\n", s.Render(fmt.Sprintf("%-8s", string(f.Severity))), f.Message)
@@ -531,7 +545,7 @@ func (m keyDetailModel) view() string {
 
 func (m keyDetailModel) viewRotateForm() string {
 	var sb strings.Builder
-	sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Rotate Key") + "\n\n")
+	sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Rotate Key") + "\n\n")
 
 	inputWidth := m.width - 26
 	if inputWidth < 20 {
@@ -551,11 +565,9 @@ func (m keyDetailModel) viewRotateForm() string {
 		fmt.Fprintf(&sb, "%s  %s\n", lbl, m.rotInputs[i].View())
 	}
 
-	sb.WriteString("\n")
 	if m.rotFormErr != "" {
-		sb.WriteString(formErrorStyle.Render("  ✗  "+m.rotFormErr) + "\n\n")
+		sb.WriteString("\n" + formErrorStyle.Render("  ✗  "+m.rotFormErr))
 	}
-	sb.WriteString(editHintStyle.Render("tab / shift+tab navigate · enter next / confirm · esc cancel"))
 	return sb.String()
 }
 

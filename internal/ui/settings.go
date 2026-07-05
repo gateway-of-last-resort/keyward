@@ -19,7 +19,6 @@ type settingsStep int
 const (
 	settingsMenu       settingsStep = iota
 	settingsChangePass              // 3-field password form
-	settingsEditSSHDir              // text input for ssh dir path
 )
 
 type settingsModel struct {
@@ -37,8 +36,9 @@ type settingsModel struct {
 	confInput textinput.Model
 	passFocus int // 0 = old, 1 = new, 2 = conf
 
-	// ssh dir field
-	sshDirInput textinput.Model
+	// ssh dir field — edited inline in the menu (no separate screen)
+	sshDirInput   textinput.Model
+	editingSSHDir bool
 
 	statusMsg string
 	isError   bool
@@ -55,11 +55,12 @@ var settingsOKStyle = lipgloss.NewStyle().Foreground(colGreen)
 
 func (m settingsModel) hints() string {
 	nav := "tab / shift+tab  switch screens"
+	if m.editingSSHDir {
+		return "enter  save  ·  esc  cancel"
+	}
 	switch m.step {
 	case settingsChangePass:
 		return "tab / enter  next field  ·  enter on last to save  ·  esc  cancel"
-	case settingsEditSSHDir:
-		return "enter  save  ·  esc  cancel"
 	default:
 		return "↑/↓  navigate  ·  enter  select  ·  esc  back  ·  " + nav
 	}
@@ -68,21 +69,25 @@ func (m settingsModel) hints() string {
 func newSettingsModel(masterKeyPath, sshDir, vaultDir string) settingsModel {
 	old := textinput.New()
 	old.Placeholder = "current password"
+	old.Prompt = "" // focus shown by the row's accent bar
 	old.EchoMode = textinput.EchoPassword
 	old.EchoCharacter = '•'
 
 	nw := textinput.New()
 	nw.Placeholder = "new password"
+	nw.Prompt = ""
 	nw.EchoMode = textinput.EchoPassword
 	nw.EchoCharacter = '•'
 
 	conf := textinput.New()
 	conf.Placeholder = "confirm new password"
+	conf.Prompt = ""
 	conf.EchoMode = textinput.EchoPassword
 	conf.EchoCharacter = '•'
 
 	dir := textinput.New()
 	dir.Placeholder = "path to .ssh directory"
+	dir.Prompt = "" // edited inline; focus shown by the row's accent bar
 	dir.CharLimit = 256
 
 	return settingsModel{
@@ -127,14 +132,16 @@ func (m settingsModel) update(msg tea.Msg) (settingsModel, tea.Cmd) {
 			return m.updateMenu(msg)
 		case settingsChangePass:
 			return m.updateChangePass(msg)
-		case settingsEditSSHDir:
-			return m.updateEditSSHDir(msg)
 		}
 	}
 	return m, nil
 }
 
 func (m settingsModel) updateMenu(msg tea.KeyMsg) (settingsModel, tea.Cmd) {
+	// When editing the SSH directory inline, keys drive the text input.
+	if m.editingSSHDir {
+		return m.updateEditSSHDir(msg)
+	}
 	switch msg.String() {
 	case "esc":
 		return m, navigate(ScreenKeys)
@@ -155,7 +162,9 @@ func (m settingsModel) updateMenu(msg tea.KeyMsg) (settingsModel, tea.Cmd) {
 			m.oldInput.Focus()
 			m.passFocus = 0
 		case 1:
-			m.step = settingsEditSSHDir
+			// Edit inline in the menu — no separate screen.
+			m.editingSSHDir = true
+			m.sshDirInput.Width = m.sshDirWidth()
 			m.sshDirInput.SetValue(m.sshDir)
 			m.sshDirInput.Focus()
 			m.sshDirInput.CursorEnd()
@@ -198,7 +207,8 @@ func (m settingsModel) updateChangePass(msg tea.KeyMsg) (settingsModel, tea.Cmd)
 func (m settingsModel) updateEditSSHDir(msg tea.KeyMsg) (settingsModel, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.step = settingsMenu
+		m.editingSSHDir = false
+		m.sshDirInput.Blur()
 		return m, nil
 	case "enter":
 		newDir := strings.TrimSpace(m.sshDirInput.Value())
@@ -218,12 +228,58 @@ func (m settingsModel) updateEditSSHDir(msg tea.KeyMsg) (settingsModel, tea.Cmd)
 			return m, nil
 		}
 		m.sshDir = newDir
-		m.step = settingsMenu
+		m.editingSSHDir = false
+		m.sshDirInput.Blur()
 		return m, func() tea.Msg { return settingsSSHDirChangedMsg{sshDir: newDir} }
 	}
+	// Keep the visible window bounded (like the config editor) so a long path
+	// scrolls within its fixed window instead of pushing out the frame.
+	m.sshDirInput.Width = m.sshDirWidth()
 	var cmd tea.Cmd
 	m.sshDirInput, cmd = m.sshDirInput.Update(msg)
 	return m, cmd
+}
+
+// settingsValueCol is the column where inline values (SSH dir, vault dir) begin,
+// leaving a clear gutter past the longest menu label so labels and values read
+// as two aligned columns instead of running together.
+const settingsValueCol = 28
+
+// settingsValuePad returns the spaces that advance from just after a 2-column
+// gutter + label to settingsValueCol.
+func settingsValuePad(label string) string {
+	n := settingsValueCol - 2 - lipgloss.Width(label)
+	if n < 2 {
+		n = 2
+	}
+	return strings.Repeat(" ", n)
+}
+
+// valueWidth is how many columns a static value (SSH dir / vault dir) may occupy
+// from settingsValueCol before it would reach the frame; longer values are
+// truncated with fitLeft so a long path never widens the frame.
+func (m settingsModel) valueWidth() int {
+	w := m.width - settingsValueCol - 2
+	if w < 10 {
+		w = 10
+	}
+	return w
+}
+
+// sshDirWidth is the visible window for the inline SSH-dir input, anchored at
+// settingsValueCol with a buffer so the value never reaches the frame's edge.
+func (m settingsModel) sshDirWidth() int {
+	w := m.width - settingsValueCol - 4
+	if w < 10 {
+		w = 10
+	}
+	return w
+}
+
+// isBusy reports whether a text input inside settings has focus, so the root
+// model can suppress global key bindings (tab, q) while typing.
+func (m settingsModel) isBusy() bool {
+	return m.step != settingsMenu || m.editingSSHDir
 }
 
 func (m settingsModel) submitChangePass() (settingsModel, tea.Cmd) {
@@ -288,7 +344,7 @@ func (m settingsModel) clearPassInputs() settingsModel {
 
 func (m settingsModel) view() string {
 	var sb strings.Builder
-	sb.WriteString(sectionHeaderStyle.Width(m.width - 2).Render("Settings"))
+	sb.WriteString(sectionHeaderStyle.Width(m.width).Render("Settings"))
 	sb.WriteString("\n\n")
 
 	switch m.step {
@@ -296,11 +352,9 @@ func (m settingsModel) view() string {
 		sb.WriteString(m.viewMenu())
 	case settingsChangePass:
 		sb.WriteString(m.viewChangePass())
-	case settingsEditSSHDir:
-		sb.WriteString(m.viewEditSSHDir())
 	}
 
-	if m.statusMsg != "" && m.step == settingsMenu {
+	if m.statusMsg != "" && m.step == settingsMenu && !m.editingSSHDir {
 		style := settingsOKStyle
 		if m.isError {
 			style = formErrorStyle
@@ -317,28 +371,32 @@ func (m settingsModel) viewMenu() string {
 	var sb strings.Builder
 
 	for i, label := range settingsMenuItems {
-		sel := i == m.cursor
-		prefix := "  "
-		labelSt := dimStyle
-		if sel {
-			prefix = "> "
-			labelSt = lipgloss.NewStyle().Foreground(ColorMint).Bold(true)
+		if i == m.cursor {
+			sb.WriteString(selectedRow(label))
+		} else {
+			sb.WriteString("  " + dimStyle.Render(label))
 		}
-		sb.WriteString(prefix)
-		sb.WriteString(labelSt.Render(label))
-		if i == 1 { // SSH directory — show current value inline
-			sb.WriteString("  ")
-			sb.WriteString(dimStyle.Render(m.sshDir))
+		if i == 1 { // SSH directory — value (or inline editor) in the value column
+			sb.WriteString(settingsValuePad(label))
+			if m.editingSSHDir {
+				m.sshDirInput.Width = m.sshDirWidth()
+				sb.WriteString(m.sshDirInput.View())
+			} else {
+				sb.WriteString(dimStyle.Render(fitLeft(m.sshDir, m.valueWidth())))
+			}
 		}
 		sb.WriteString("\n")
 	}
 
+	if m.editingSSHDir && m.formErr != nil {
+		sb.WriteString("\n  " + formErrorStyle.Render("✗  "+m.formErr.Error()) + "\n")
+	}
+
 	sb.WriteString("\n\n")
-	sb.WriteString(dimStyle.Render("  vault dir  "))
-	sb.WriteString(dimStyle.Render(m.vaultDir))
+	sb.WriteString(dimStyle.Render("  vault dir" + settingsValuePad("vault dir") + fitLeft(m.vaultDir, m.valueWidth())))
 	sb.WriteString("\n\n\n\n\n")
 
-	const version = "v0.4.0"
+	const version = "v0.5.0"
 	const repo = "github.com/gateway-of-last-resort"
 	footer := version + "  ·  " + repo
 	pad := (m.width - len(footer)) / 2
@@ -352,36 +410,24 @@ func (m settingsModel) viewMenu() string {
 
 func (m settingsModel) viewChangePass() string {
 	var sb strings.Builder
-	sb.WriteString(labelStyle.Render("Change master password"))
+	sb.WriteString("  " + labelStyle.Render("Change master password"))
 	sb.WriteString("\n\n")
-	sb.WriteString(formLabelStyle.Render("Current password"))
-	sb.WriteString("  ")
-	sb.WriteString(m.oldInput.View())
-	sb.WriteString("\n")
-	sb.WriteString(formLabelStyle.Render("New password"))
-	sb.WriteString("  ")
-	sb.WriteString(m.newInput.View())
-	sb.WriteString("\n")
-	sb.WriteString(formLabelStyle.Render("Confirm password"))
-	sb.WriteString("  ")
-	sb.WriteString(m.confInput.View())
-	sb.WriteString("\n")
-	if m.formErr != nil {
-		sb.WriteString("\n  ")
-		sb.WriteString(formErrorStyle.Render("✗  " + m.formErr.Error()))
+	rows := []struct {
+		label string
+		input string
+		focus int
+	}{
+		{"Current password", m.oldInput.View(), 0},
+		{"New password", m.newInput.View(), 1},
+		{"Confirm password", m.confInput.View(), 2},
+	}
+	for _, r := range rows {
+		sb.WriteString(rowGutter(m.passFocus == r.focus))
+		sb.WriteString(formLabelStyle.Render(r.label))
+		sb.WriteString("  ")
+		sb.WriteString(r.input)
 		sb.WriteString("\n")
 	}
-	return sb.String()
-}
-
-func (m settingsModel) viewEditSSHDir() string {
-	var sb strings.Builder
-	sb.WriteString(labelStyle.Render("SSH directory"))
-	sb.WriteString("\n\n")
-	sb.WriteString(formLabelStyle.Render("Path"))
-	sb.WriteString("  ")
-	sb.WriteString(m.sshDirInput.View())
-	sb.WriteString("\n")
 	if m.formErr != nil {
 		sb.WriteString("\n  ")
 		sb.WriteString(formErrorStyle.Render("✗  " + m.formErr.Error()))

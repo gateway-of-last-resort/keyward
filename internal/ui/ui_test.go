@@ -6,15 +6,21 @@ package ui
 // docs/manual-testing.md; the section numbers are referenced in test names.
 
 import (
+	"crypto/ed25519"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/gateway-of-last-resort/keyward/internal/config"
 	"github.com/gateway-of-last-resort/keyward/internal/keys"
+	"github.com/gateway-of-last-resort/keyward/internal/knownhosts"
 )
 
 // k builds a tea.KeyMsg whose String() matches what the update funcs switch on.
@@ -88,7 +94,7 @@ func sendRoot(t *testing.T, m Model, key string) (Model, tea.Cmd) {
 
 func TestNav_TabCyclesForward(t *testing.T) {
 	m := Model{active: ScreenKeys}
-	want := []Screen{ScreenAudit, ScreenConfig, ScreenGenerate, ScreenBackup, ScreenSettings, ScreenKeys}
+	want := []Screen{ScreenAudit, ScreenConfig, ScreenGenerate, ScreenKnownHosts, ScreenBackup, ScreenSettings, ScreenKeys}
 	for i, w := range want {
 		m, _ = sendRoot(t, m, "tab")
 		if m.active != w {
@@ -759,6 +765,33 @@ func TestSettings_SSHDirChangeEmitsMsg(t *testing.T) { // §10.9
 	}
 }
 
+// The SSH directory is edited inline in the menu (no separate screen): enter
+// starts editing and marks the model busy so global tab/q are suppressed; esc
+// cancels back to the menu without navigating away.
+func TestSettings_SSHDirInlineEditCancel(t *testing.T) {
+	m := newSettingsModel("master.key", "/ssh", "/vault")
+	m, _ = m.updateMenu(k("down"))  // cursor -> SSH directory
+	m, _ = m.updateMenu(k("enter")) // start inline edit
+	if !m.editingSSHDir {
+		t.Fatal("enter on SSH directory should start inline edit")
+	}
+	if m.step != settingsMenu {
+		t.Fatalf("inline edit must stay on the menu step; got %v", m.step)
+	}
+	if !m.isBusy() {
+		t.Fatal("inline edit should mark settings busy so tab/q are suppressed")
+	}
+	m, cmd := m.update(k("esc"))
+	if m.editingSSHDir || m.isBusy() {
+		t.Fatal("esc should cancel inline edit and clear busy")
+	}
+	if cmd != nil {
+		if _, ok := runCmd(cmd).(navigateMsg); ok {
+			t.Fatal("esc that only cancels inline edit must not navigate away")
+		}
+	}
+}
+
 // A nonexistent path must be rejected in the form and must NOT emit a
 // dir-changed message — otherwise the key list would be blanked and a bad
 // path persisted to prefs.
@@ -914,5 +947,265 @@ func TestDetail_AddToAgentAlreadyLoaded(t *testing.T) {
 	kd, cmd := kd.update(k("A"))
 	if kd.addingAgent || cmd != nil {
 		t.Fatal("'A' on an already-loaded key should do nothing")
+	}
+}
+
+// fitRight keeps the head of a string and appends "…" only when it overflows.
+func TestFitRight(t *testing.T) {
+	cases := []struct {
+		name string
+		s    string
+		n    int
+		want string
+	}{
+		{"fits exactly", "82.70.50.109", 12, "82.70.50.109"},
+		{"shorter than n", "60", 12, "60"},
+		{"truncated", "/Users/weiqur/.ssh/some-really-long-identity-file", 12, "/Users/weiq…"},
+		{"n too small returns input", "value", 1, "value"},
+		{"empty", "", 12, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fitRight(tc.s, tc.n)
+			if got != tc.want {
+				t.Fatalf("fitRight(%q, %d) = %q, want %q", tc.s, tc.n, got, tc.want)
+			}
+			if tc.n > 1 && len([]rune(got)) > tc.n {
+				t.Fatalf("result %q exceeds width %d", got, tc.n)
+			}
+		})
+	}
+}
+
+// Editing an overlong value must scroll horizontally inside a fixed window —
+// no rendered line may ever exceed the pane width and push the frame out.
+func TestConfig_LongValueNeverOverflows(t *testing.T) {
+	cfg, dir := loadConfig(t)
+	m := newConfigModel(cfg, dir)
+	m.width, m.height = 100, 20
+
+	long := strings.Repeat("very-long-proxy-command-", 8) // ~192 chars
+	m.cfg.Blocks[1].Tokens[2].Value = long                // myserver → HostName
+
+	// Static view: the value is truncated with a trailing ellipsis.
+	m, _ = m.update(k("down")) // select "myserver"
+	m, _ = m.update(k("enter"))
+	for _, line := range strings.Split(m.view(), "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("static view line overflows: width %d > %d\n%q", w, m.width, line)
+		}
+	}
+	if !strings.Contains(m.view(), "…") {
+		t.Fatal("static view should truncate the long value with an ellipsis")
+	}
+
+	// Edit mode: the input window is fixed; typing and cursor movement scroll
+	// the value instead of widening the row.
+	m, _ = m.update(k("e"))
+	if !m.editing {
+		t.Fatal("expected edit mode")
+	}
+	if m.editInput.Width <= 0 {
+		t.Fatal("editInput.Width must be set on edit start for horizontal scrolling")
+	}
+	m, _ = m.update(k("x")) // type at the end
+	for _, line := range strings.Split(m.view(), "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("edit view line overflows: width %d > %d\n%q", w, m.width, line)
+		}
+	}
+	m, _ = m.update(k("esc"))
+
+	// Add-param form: a long value typed into the inputs scrolls too.
+	m, _ = m.update(k("a"))
+	m, _ = m.update(k("ProxyCommand"))
+	m, _ = m.update(k("tab"))
+	m, _ = m.update(k(long))
+	if m.addParamInputs[1].Width <= 0 {
+		t.Fatal("add-param input width must be set for horizontal scrolling")
+	}
+	for _, line := range strings.Split(m.view(), "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("add-param view line overflows: width %d > %d\n%q", w, m.width, line)
+		}
+	}
+	m, _ = m.update(k("esc"))
+
+	// Hosts pane: renaming to / adding an overlong pattern scrolls inside the
+	// pane and never pushes the divider; a long static name is truncated.
+	m, _ = m.update(k("esc")) // back to left pane
+	m, _ = m.update(k("r"))
+	if m.renameInput.Width <= 0 {
+		t.Fatal("rename input width must be set for horizontal scrolling")
+	}
+	m, _ = m.update(k(long))
+	hostsPaneOverflow(t, m)
+	m, _ = m.update(k("enter")) // commit rename → long static name
+	hostsPaneOverflow(t, m)
+
+	m, _ = m.update(k("a"))
+	m, _ = m.update(k(long))
+	hostsPaneOverflow(t, m)
+}
+
+// hostsPaneOverflow asserts no view line spills past the Hosts pane into the
+// divider column.
+func hostsPaneOverflow(t *testing.T, m configModel) {
+	t.Helper()
+	leftW, _ := m.paneWidths()
+	for _, line := range strings.Split(m.view(), "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("view line overflows frame: width %d > %d\n%q", w, m.width, line)
+		}
+		// Every joined line must still carry the divider at column leftW+1.
+		plain := []rune(stripANSI(line))
+		if strings.ContainsRune(string(plain), '│') && len(plain) > leftW &&
+			!strings.HasPrefix(strings.TrimLeft(string(plain[leftW:]), " "), "│") {
+			t.Fatalf("divider shifted from column %d:\n%q", leftW+1, string(plain))
+		}
+	}
+}
+
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// stripANSI removes SGR escape sequences so columns can be counted.
+func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
+
+// ── §11 known_hosts viewer ──────────────────────────────────────────────────
+
+// writeKnownHostsFile writes a known_hosts file with n plain ed25519 entries
+// (hosts host1.example … hostN.example) into a fresh temp SSH dir and returns
+// that dir.
+func writeKnownHostsFile(t *testing.T, n int) string {
+	t.Helper()
+	sshDir := t.TempDir()
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		pub, _, err := ed25519.GenerateKey(nil)
+		if err != nil {
+			t.Fatalf("generate key: %v", err)
+		}
+		sshPub, err := ssh.NewPublicKey(pub)
+		if err != nil {
+			t.Fatalf("ssh.NewPublicKey: %v", err)
+		}
+		line := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
+		fmt.Fprintf(&b, "host%d.example %s\n", i, line)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "known_hosts"), []byte(b.String()), 0o600); err != nil {
+		t.Fatalf("write known_hosts: %v", err)
+	}
+	return sshDir
+}
+
+// khEntries builds n in-memory known_hosts entries for view/nav tests.
+func khEntries(n int) []knownhosts.Entry {
+	out := make([]knownhosts.Entry, n)
+	for i := range out {
+		out[i] = knownhosts.Entry{
+			Hosts:       []string{fmt.Sprintf("host%d.example", i+1)},
+			KeyType:     "ssh-ed25519",
+			Fingerprint: "SHA256:abc",
+			LineNum:     i + 1,
+		}
+	}
+	return out
+}
+
+func TestKnownHosts_NavigatePopulatesFromFile(t *testing.T) {
+	sshDir := writeKnownHostsFile(t, 3)
+	m := Model{active: ScreenKeys, sshDir: sshDir}
+	m, _ = sendRoot(t, m, "tab") // Audit
+	m, _ = sendRoot(t, m, "tab") // Config
+	m, _ = sendRoot(t, m, "tab") // Generate
+	m, _ = sendRoot(t, m, "tab") // Known Hosts
+	if m.active != ScreenKnownHosts {
+		t.Fatalf("active = %v, want ScreenKnownHosts", m.active)
+	}
+	if len(m.knownHosts.entries) != 3 {
+		t.Fatalf("entries = %d, want 3", len(m.knownHosts.entries))
+	}
+}
+
+func TestKnownHosts_ForgetTwoStepConfirm(t *testing.T) {
+	m := knownHostsModel{entries: khEntries(3), path: "irrelevant"}
+
+	// First d arms the confirmation and issues no command.
+	m, cmd := m.update(k("d"))
+	if !m.confirmForget {
+		t.Fatal("first d should arm confirmForget")
+	}
+	if cmd != nil {
+		t.Fatal("first d should not issue a command")
+	}
+
+	// esc cancels the confirmation without navigating away.
+	m, cmd = m.update(k("esc"))
+	if m.confirmForget {
+		t.Fatal("esc should clear confirmForget")
+	}
+	if cmd != nil {
+		t.Fatal("esc that only cancels confirm should not navigate")
+	}
+
+	// d, d issues the forget command.
+	m, _ = m.update(k("d"))
+	m, cmd = m.update(k("d"))
+	if m.confirmForget {
+		t.Fatal("second d should clear confirmForget")
+	}
+	if cmd == nil {
+		t.Fatal("second d should issue the forget command")
+	}
+}
+
+func TestKnownHosts_ForgetRemovesEntryAndKeepsSize(t *testing.T) {
+	sshDir := writeKnownHostsFile(t, 3)
+	m := Model{active: ScreenKeys, sshDir: sshDir, width: 100, height: 30}
+	m = m.propagateSize()
+	m, _ = sendRoot(t, m, "tab")
+	m, _ = sendRoot(t, m, "tab")
+	m, _ = sendRoot(t, m, "tab")
+	m, _ = sendRoot(t, m, "tab")
+	if m.active != ScreenKnownHosts {
+		t.Fatalf("active = %v, want ScreenKnownHosts", m.active)
+	}
+	m.knownHosts.cursor = 1 // target host2.example
+	wantH := m.knownHosts.height
+
+	// d, d → forget command, then apply its message through the root model.
+	var cmd tea.Cmd
+	m.knownHosts, _ = m.knownHosts.update(k("d"))
+	m.knownHosts, cmd = m.knownHosts.update(k("d"))
+	msg := runCmd(cmd)
+	if _, ok := msg.(khForgotMsg); !ok {
+		t.Fatalf("expected khForgotMsg, got %T", msg)
+	}
+	next, _ := m.Update(msg)
+	m = next.(Model)
+
+	if len(m.knownHosts.entries) != 2 {
+		t.Fatalf("entries after forget = %d, want 2", len(m.knownHosts.entries))
+	}
+	for _, e := range m.knownHosts.entries {
+		if e.Hosts[0] == "host2.example" {
+			t.Fatal("host2.example should have been forgotten")
+		}
+	}
+	if m.knownHosts.height != wantH || m.knownHosts.width == 0 {
+		t.Fatalf("size not retained after forget: w=%d h=%d (want h=%d)",
+			m.knownHosts.width, m.knownHosts.height, wantH)
+	}
+}
+
+func TestKnownHosts_EmptyScreenNoCrash(t *testing.T) {
+	m := knownHostsModel{width: 80, height: 20}
+	// d on an empty list is a no-op and must not panic.
+	m, cmd := m.update(k("d"))
+	if cmd != nil || m.confirmForget {
+		t.Fatal("d on empty list should do nothing")
+	}
+	if !strings.Contains(m.view(), "no known_hosts entries") {
+		t.Fatalf("empty view missing placeholder:\n%s", m.view())
 	}
 }

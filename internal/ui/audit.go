@@ -59,7 +59,7 @@ func (m auditModel) view() string {
 	r := m.report
 	var sb strings.Builder
 
-	sb.WriteString(sectionHeaderStyle.Width(m.width-2).Render("Security Audit") + "\n\n")
+	sb.WriteString(sectionHeaderStyle.Width(m.width).Render("Security Audit") + "\n\n")
 
 	// ── Grade + score bar ──────────────────────────────────────────────────────
 	gradeStyle := lipgloss.NewStyle().
@@ -90,7 +90,7 @@ func (m auditModel) view() string {
 	}
 
 	// ── Divider ────────────────────────────────────────────────────────────────
-	sb.WriteString(dimStyle.Render(strings.Repeat("─", m.width-2)) + "\n")
+	sb.WriteString(dimStyle.Render(strings.Repeat("─", m.width)) + "\n")
 
 	// ── Findings list ──────────────────────────────────────────────────────────
 	maxRows := m.height - 8
@@ -111,14 +111,10 @@ func (m auditModel) view() string {
 		selected := i == m.cursor
 
 		badge := badgeForSeverity(res.Severity)
-		prefix := "  "
+		body := badge + "  " + res.Message
+		line := "  " + body
 		if selected {
-			prefix = dimStyle.Render("▸ ")
-		}
-
-		line := prefix + badge + "  " + res.Message
-		if selected {
-			line = selectedRowStyle.Render(line)
+			line = selectedRow(body)
 		}
 		sb.WriteString(line + "\n")
 
@@ -144,14 +140,8 @@ func badgeForSeverity(s audit.Severity) string {
 		audit.Warning:  "⚠",
 		audit.Info:     "i",
 	}
-	const badgeTextWidth = 10
 	if style, ok := severityBadge[s]; ok {
-		label := icons[s] + " " + string(s)
-		runes := []rune(label)
-		if len(runes) < badgeTextWidth {
-			label += strings.Repeat(" ", badgeTextWidth-len(runes))
-		}
-		return style.Render(label)
+		return style.Render(padBadgeLabel(icons[s] + " " + string(s)))
 	}
-	return okStyle.Render("✓ OK")
+	return okBadgeStyle.Render(padBadgeLabel("✓ OK"))
 }

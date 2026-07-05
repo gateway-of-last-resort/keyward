@@ -55,6 +55,7 @@ func newGenerateModel(sshDir string) generateModel {
 	mkInput := func(placeholder string, echo bool) textinput.Model {
 		ti := textinput.New()
 		ti.Placeholder = placeholder
+		ti.Prompt = "" // focus is shown by the row's accent bar, not a "> " prompt
 		if echo {
 			ti.EchoMode = textinput.EchoPassword
 			ti.EchoCharacter = '•'
@@ -90,7 +91,7 @@ var (
 	toggleOffStyle = lipgloss.NewStyle().Foreground(colTextDim)
 
 	focusedHighlight = lipgloss.NewStyle().
-				Background(ColorSurface).
+				Background(ColorSelBg).
 				Foreground(ColorMint).
 				Bold(true).
 				Padding(0, 1)
@@ -249,7 +250,7 @@ var inputLabels = [inCount]string{
 func (m generateModel) view() string {
 	var sb strings.Builder
 
-	sb.WriteString(sectionHeaderStyle.Width(m.width-2).Render("Generate SSH Key") + "\n\n")
+	sb.WriteString(sectionHeaderStyle.Width(m.width).Render("Generate SSH Key") + "\n\n")
 
 	if m.submitting {
 		sb.WriteString(m.spinner.View() + "  " + dimStyle.Render("Generating key...") + "\n")
@@ -258,6 +259,7 @@ func (m generateModel) view() string {
 
 	// ── Algorithm toggle ──────────────────────────────
 	algoFocused := m.focused == 0
+	sb.WriteString(rowGutter(algoFocused))
 	sb.WriteString(formLabelStyle.Render("Algorithm"))
 	sb.WriteString("  ")
 	for i, a := range algorithms {
@@ -287,6 +289,7 @@ func (m generateModel) view() string {
 		if i == inComment && algorithms[m.algoIdx] == keys.AlgorithmRSA {
 			lbl = "Bit size / comment"
 		}
+		sb.WriteString(rowGutter(m.focused == i+1))
 		sb.WriteString(formLabelStyle.Render(lbl))
 		sb.WriteString("  ")
 		inp := m.inputs[i].View()
@@ -295,6 +298,7 @@ func (m generateModel) view() string {
 
 	// ── Allow empty passphrase toggle ─────────────────
 	emptyFocused := m.focused == fieldCount-1
+	sb.WriteString(rowGutter(emptyFocused))
 	sb.WriteString(formLabelStyle.Render("Allow empty pass"))
 	sb.WriteString("  ")
 	if m.allowEmpty {

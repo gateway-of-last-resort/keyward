@@ -333,7 +333,7 @@ func (m backupModel) handleResult(r backupResultMsg) backupModel {
 func (m backupModel) view() string {
 	var sb strings.Builder
 
-	sb.WriteString(sectionHeaderStyle.Width(m.width-2).Render("Backup / Restore") + "\n\n")
+	sb.WriteString(sectionHeaderStyle.Width(m.width).Render("Backup / Restore") + "\n\n")
 
 	// existing backups list
 	if len(m.backups) > 0 {

@@ -180,9 +180,9 @@ func (m setupModel) view() string {
 		return sb.String()
 	}
 
-	sb.WriteString(formLabelStyle.Render("Master password"))
+	sb.WriteString("  " + formLabelStyle.Render("Master password"))
 	sb.WriteString("  " + m.passInput.View() + "\n")
-	sb.WriteString(formLabelStyle.Render("Confirm password"))
+	sb.WriteString("  " + formLabelStyle.Render("Confirm password"))
 	sb.WriteString("  " + m.confInput.View() + "\n")
 
 	if m.formErr != nil {
@@ -300,7 +300,7 @@ func (m unlockModel) view() string {
 		return sb.String()
 	}
 
-	sb.WriteString(formLabelStyle.Render("Master password"))
+	sb.WriteString("  " + formLabelStyle.Render("Master password"))
 	sb.WriteString("  " + m.passInput.View() + "\n")
 
 	if m.formErr != nil {

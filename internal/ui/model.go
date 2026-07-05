@@ -16,6 +16,7 @@ import (
 	"github.com/gateway-of-last-resort/keyward/internal/audit"
 	"github.com/gateway-of-last-resort/keyward/internal/config"
 	"github.com/gateway-of-last-resort/keyward/internal/keys"
+	"github.com/gateway-of-last-resort/keyward/internal/knownhosts"
 	"github.com/gateway-of-last-resort/keyward/internal/storage"
 	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
@@ -24,15 +25,16 @@ import (
 type Screen int
 
 const (
-	ScreenSetup    Screen = iota // first-run: create master password
-	ScreenUnlock                 // subsequent runs: enter master password
-	ScreenKeys                   // list of SSH keys
-	ScreenDetail                 // key detail view
-	ScreenAudit                  // audit dashboard
-	ScreenGenerate               // key generation form
-	ScreenConfig                 // SSH config editor
-	ScreenBackup                 // backup / restore
-	ScreenSettings               // settings (password change, ssh dir, etc.)
+	ScreenSetup      Screen = iota // first-run: create master password
+	ScreenUnlock                   // subsequent runs: enter master password
+	ScreenKeys                     // list of SSH keys
+	ScreenDetail                   // key detail view
+	ScreenAudit                    // audit dashboard
+	ScreenGenerate                 // key generation form
+	ScreenConfig                   // SSH config editor
+	ScreenKnownHosts               // known_hosts viewer
+	ScreenBackup                   // backup / restore
+	ScreenSettings                 // settings (password change, ssh dir, etc.)
 )
 
 // Model is the root Bubble Tea model.
@@ -62,6 +64,7 @@ type Model struct {
 	auditView    auditModel
 	genForm      generateModel
 	cfgEditor    configModel
+	knownHosts   knownHostsModel
 	backupView   backupModel
 	settingsView settingsModel
 
@@ -194,17 +197,19 @@ var tabScreens = []Screen{
 	ScreenAudit,
 	ScreenConfig,
 	ScreenGenerate,
+	ScreenKnownHosts,
 	ScreenBackup,
 	ScreenSettings,
 }
 
 var tabLabels = map[Screen]string{
-	ScreenKeys:     "SSH Keys",
-	ScreenAudit:    "Audit",
-	ScreenConfig:   "Config",
-	ScreenGenerate: "Generate",
-	ScreenBackup:   "Backup",
-	ScreenSettings: "Settings",
+	ScreenKeys:       "SSH Keys",
+	ScreenAudit:      "Audit",
+	ScreenConfig:     "Config",
+	ScreenKnownHosts: "Known Hosts",
+	ScreenGenerate:   "Generate",
+	ScreenBackup:     "Backup",
+	ScreenSettings:   "Settings",
 }
 
 // tabIndex returns the position of the active screen in tabScreens.
@@ -293,7 +298,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// not when a config editor input is active (Tab switches key↔value fields there),
 		// and not while typing in the key list (search/import).
 		cfgBusy := m.active == ScreenConfig && m.cfgEditor.isBusy()
-		settingsBusy := m.active == ScreenSettings && m.settingsView.step != settingsMenu
+		settingsBusy := m.active == ScreenSettings && m.settingsView.isBusy()
 		keysBusy := m.active == ScreenKeys && (m.keyList.searching || m.keyList.importing)
 		if !cfgBusy && !settingsBusy && !keysBusy && m.active != ScreenDetail && m.active != ScreenSetup && m.active != ScreenUnlock {
 			switch msg.String() {
@@ -480,6 +485,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Persist the SSH dir only after a successful scan.
 		return m, m.savePrefs()
 
+	case khForgotMsg:
+		// Re-read known_hosts and rebuild the screen so the removed entry is
+		// gone; keep the cursor in range and restore sizing.
+		cursor := m.knownHosts.cursor
+		path := m.knownHosts.path
+		entries, err := knownhosts.Parse(path)
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		m.knownHosts = newKnownHostsModel(entries, m.sshDir, path)
+		if cursor >= len(entries) {
+			cursor = len(entries) - 1
+		}
+		if cursor < 0 {
+			cursor = 0
+		}
+		m.knownHosts.cursor = cursor
+		m = m.propagateSize()
+		return m, nil
+
 	case backupResultMsg:
 		m.backupView, _ = m.backupView.update(msg)
 		if msg.err == nil && msg.restored {
@@ -528,6 +554,13 @@ func (m Model) navigate(msg navigateMsg) (Model, tea.Cmd) {
 		m.genForm = newGenerateModel(m.sshDir)
 	case ScreenConfig:
 		m.cfgEditor = newConfigModel(m.cfg, m.sshDir)
+	case ScreenKnownHosts:
+		path := filepath.Join(m.sshDir, "known_hosts")
+		entries, err := knownhosts.Parse(path)
+		if err != nil {
+			m.err = err
+		}
+		m.knownHosts = newKnownHostsModel(entries, m.sshDir, path)
 	case ScreenBackup:
 		m.backupView = newBackupModel(m.sshDir, m.vaultDir, m.identity)
 	case ScreenSettings:
@@ -559,6 +592,8 @@ func (m Model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cfgEditor.saved {
 			m.cfgEditor.saved = false
 		}
+	case ScreenKnownHosts:
+		m.knownHosts, cmd = m.knownHosts.update(msg)
 	case ScreenBackup:
 		m.backupView, cmd = m.backupView.update(msg)
 	case ScreenSettings:
@@ -583,6 +618,8 @@ func (m Model) viewActive() string {
 		return m.genForm.view()
 	case ScreenConfig:
 		return m.cfgEditor.view()
+	case ScreenKnownHosts:
+		return m.knownHosts.view()
 	case ScreenBackup:
 		return m.backupView.view()
 	case ScreenSettings:
@@ -622,6 +659,7 @@ func (m Model) propagateSize() Model {
 	m.auditView.width, m.auditView.height = w, avail
 	m.genForm.width, m.genForm.height = w, avail
 	m.cfgEditor.width, m.cfgEditor.height = w, avail
+	m.knownHosts.width, m.knownHosts.height = w, avail
 	m.backupView.width, m.backupView.height = w, avail
 	m.settingsView.width, m.settingsView.height = w, avail
 	return m
@@ -703,6 +741,8 @@ func (m Model) statusBar() string {
 		return sep + "\n" + errorBarStyle.Render("✗  "+m.err.Error())
 	}
 	switch m.active {
+	case ScreenDetail:
+		return sep + "\n" + statusBarStyle.Render(m.keyDetail.hints())
 	case ScreenConfig:
 		return sep + "\n" + statusBarStyle.Render(m.cfgEditor.hints())
 	case ScreenBackup:
@@ -722,14 +762,14 @@ func screenHint(s Screen) string {
 		return "enter  unlock  ·  ctrl+c quit"
 	case ScreenKeys:
 		return "↑/↓ navigate  ·  enter detail  ·  / search  ·  i import  ·  q quit  ·  " + nav
-	case ScreenDetail:
-		return "c copy pubkey  ·  e edit  ·  A add to agent  ·  r rotate  ·  d delete  ·  esc back"
 	case ScreenAudit:
 		return "↑/↓ navigate  ·  esc  back  · " + nav
 	case ScreenGenerate:
 		return "↑/↓ next field  ·  space toggle  ·  enter confirm  ·  esc cancel  ·  " + nav
 	case ScreenConfig:
 		return "↑/↓ j/k navigate  ·  enter open  ·  a add  ·  e edit  ·  t toggle  ·  s save  ·  " + nav
+	case ScreenKnownHosts:
+		return "↑/↓ j/k navigate  ·  d forget  ·  esc back  ·  " + nav
 	case ScreenBackup:
 		return "↑/↓  navigate  ·  b  backup  ·  r  restore  ·  d  delete  ·  esc  back  ·  " + nav
 	case ScreenSettings:
