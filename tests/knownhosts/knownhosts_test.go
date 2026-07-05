@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -159,6 +160,11 @@ func TestForget_RemovesOnlyTargetLine(t *testing.T) {
 }
 
 func TestForget_PreservesMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows doesn't carry Unix permission bits, so an exact-mode
+		// comparison is meaningless there (the file reports 0666/0444).
+		t.Skip("permission bits are not portable on Windows")
+	}
 	k1 := authorizedKey(t)
 	k2 := authorizedKey(t)
 	path := writeKnownHosts(t, []string{"a.example " + k1, "b.example " + k2})
