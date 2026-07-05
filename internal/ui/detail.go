@@ -42,9 +42,15 @@ type keyDetailModel struct {
 	tagCursor int
 	editTags  []string
 	noteInput textarea.Model
+
+	// ssh-agent
+	inAgent      bool // key is currently loaded in the agent
+	addingAgent  bool // passphrase prompt for "add to agent" is open
+	agentPass    textinput.Model
+	agentPassErr string
 }
 
-func newKeyDetailModel(k keys.Key, results []audit.AuditResult, store *storage.Store) keyDetailModel {
+func newKeyDetailModel(k keys.Key, results []audit.AuditResult, store *storage.Store, inAgent bool) keyDetailModel {
 	var findings []audit.AuditResult
 	for _, r := range results {
 		if r.KeyPath == k.PrivateKeyPath {
@@ -66,7 +72,7 @@ func newKeyDetailModel(k keys.Key, results []audit.AuditResult, store *storage.S
 	ta.CharLimit = 0
 	ta.KeyMap.InsertNewline.SetEnabled(true)
 	ta.Blur()
-	return keyDetailModel{key: k, findings: findings, meta: meta, noteInput: ta}
+	return keyDetailModel{key: k, findings: findings, meta: meta, noteInput: ta, inAgent: inAgent}
 }
 
 var (
@@ -106,6 +112,9 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 		if m.confirmRotate {
 			return m.updateRotateForm(msg)
 		}
+		if m.addingAgent {
+			return m.updateAgentPrompt(msg)
+		}
 		m.copied = false
 		switch msg.String() {
 		case "e":
@@ -121,6 +130,14 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 				return m, func() tea.Msg { return errMsg{err} }
 			}
 			m.copied = true
+		case "A":
+			if m.confirmDelete || m.key.Fingerprint == "" || m.inAgent {
+				break
+			}
+			if m.key.HasPassphrase {
+				return m.enterAgentPrompt(), nil
+			}
+			return m, addToAgentCmd(m.key, nil)
 		case "r":
 			m.confirmDelete = false
 			m = m.enterRotateForm()
@@ -140,6 +157,41 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// ── add-to-agent passphrase prompt ──────────────────────────────────────────
+
+func (m keyDetailModel) enterAgentPrompt() keyDetailModel {
+	pass := textinput.New()
+	pass.Placeholder = "key passphrase"
+	pass.EchoMode = textinput.EchoPassword
+	pass.EchoCharacter = '•'
+	pass.Width = 40
+	pass.Focus()
+	m.agentPass = pass
+	m.agentPassErr = ""
+	m.addingAgent = true
+	return m
+}
+
+func (m keyDetailModel) updateAgentPrompt(msg tea.KeyMsg) (keyDetailModel, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.addingAgent = false
+		m.agentPassErr = ""
+		return m, nil
+	case "enter":
+		pass := m.agentPass.Value()
+		if pass == "" {
+			m.agentPassErr = "passphrase required"
+			return m, nil
+		}
+		m.addingAgent = false
+		return m, addToAgentCmd(m.key, []byte(pass))
+	}
+	var cmd tea.Cmd
+	m.agentPass, cmd = m.agentPass.Update(msg)
+	return m, cmd
 }
 
 // ── rotation form ─────────────────────────────────────────────────────────────
@@ -392,6 +444,13 @@ func (m keyDetailModel) view() string {
 	field("Modified", k.ModifiedAt.Format("2006-01-02 15:04:05"))
 	field("Has passphrase", boolLabel(k.HasPassphrase))
 	field("Public only", boolLabel(k.IsPublicOnly))
+	if !k.IsPublicOnly {
+		agentStatus := dimStyle.Render("not loaded")
+		if m.inAgent {
+			agentStatus = okStyle.Render("✓ loaded")
+		}
+		field("In ssh-agent", agentStatus)
+	}
 	field("Private path", k.PrivateKeyPath)
 	if k.PublicKeyPath != "" {
 		field("Public path", k.PublicKeyPath)
@@ -399,6 +458,16 @@ func (m keyDetailModel) view() string {
 
 	if m.confirmRotate {
 		sb.WriteString(m.viewRotateForm())
+		return sb.String()
+	}
+
+	if m.addingAgent {
+		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width-2).Render("Add to ssh-agent") + "\n\n")
+		fmt.Fprintf(&sb, "%s  %s\n", detailLabelStyle.Render("Passphrase"), m.agentPass.View())
+		if m.agentPassErr != "" {
+			sb.WriteString("\n" + warnMsgStyle.Render(m.agentPassErr))
+		}
+		sb.WriteString("\n" + editHintStyle.Render("enter  add · esc  cancel"))
 		return sb.String()
 	}
 

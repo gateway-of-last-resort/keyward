@@ -821,7 +821,7 @@ func TestModel_KeysReloadedErrorKeepsList(t *testing.T) {
 func TestDetail_EditMetadataSaveWithCtrlS(t *testing.T) { // §5.4/5.5
 	kd := newKeyDetailModel(keys.Key{
 		PrivateKeyPath: "/ssh/id_rsa", Algorithm: "ssh-rsa", Fingerprint: "SHA256:test",
-	}, nil, nil)
+	}, nil, nil, false)
 	kd.width = 100
 	kd, _ = kd.update(k("e")) // enter edit mode
 	if !kd.editing {
@@ -852,12 +852,67 @@ func TestDetail_EditMetadataSaveWithCtrlS(t *testing.T) { // §5.4/5.5
 func TestDetail_EnterDoesNotSaveMetadata(t *testing.T) {
 	kd := newKeyDetailModel(keys.Key{
 		PrivateKeyPath: "/ssh/id_rsa", Algorithm: "ssh-rsa", Fingerprint: "SHA256:test",
-	}, nil, nil)
+	}, nil, nil, false)
 	kd.width = 100
 	kd, _ = kd.update(k("e"))
 	kd, _ = kd.update(k("down")) // focus note
 	_, cmd := kd.update(k("enter"))
 	if _, ok := runCmd(cmd).(keyMetaUpdatedMsg); ok {
 		t.Fatal("enter in note field must not save metadata (use ctrl+s)")
+	}
+}
+
+// 'A' on an encrypted key opens a passphrase prompt; empty enter errors, esc cancels.
+func TestDetail_AddToAgentPromptsForPassphrase(t *testing.T) {
+	kd := newKeyDetailModel(keys.Key{
+		PrivateKeyPath: "/ssh/id", Fingerprint: "SHA256:x", HasPassphrase: true,
+	}, nil, nil, false)
+	kd.width = 100
+
+	kd, cmd := kd.update(k("A"))
+	if !kd.addingAgent {
+		t.Fatal("'A' on an encrypted key should open the passphrase prompt")
+	}
+	if cmd != nil {
+		t.Fatal("no command should run until the passphrase is entered")
+	}
+
+	kd, _ = kd.update(k("enter")) // empty passphrase
+	if kd.agentPassErr == "" {
+		t.Fatal("empty passphrase should set an error")
+	}
+
+	kd, _ = kd.update(k("esc"))
+	if kd.addingAgent {
+		t.Fatal("esc should cancel the prompt")
+	}
+}
+
+// 'A' on an unencrypted key issues the add command directly (no prompt).
+func TestDetail_AddToAgentNoPassphrase(t *testing.T) {
+	kd := newKeyDetailModel(keys.Key{
+		PrivateKeyPath: "/ssh/id", Fingerprint: "SHA256:x", HasPassphrase: false,
+	}, nil, nil, false)
+	kd.width = 100
+
+	kd, cmd := kd.update(k("A"))
+	if kd.addingAgent {
+		t.Fatal("an unencrypted key should not open a prompt")
+	}
+	if cmd == nil {
+		t.Fatal("'A' should return an add-to-agent command")
+	}
+}
+
+// 'A' on a key already in the agent is a no-op.
+func TestDetail_AddToAgentAlreadyLoaded(t *testing.T) {
+	kd := newKeyDetailModel(keys.Key{
+		PrivateKeyPath: "/ssh/id", Fingerprint: "SHA256:x", HasPassphrase: true,
+	}, nil, nil, true)
+	kd.width = 100
+
+	kd, cmd := kd.update(k("A"))
+	if kd.addingAgent || cmd != nil {
+		t.Fatal("'A' on an already-loaded key should do nothing")
 	}
 }

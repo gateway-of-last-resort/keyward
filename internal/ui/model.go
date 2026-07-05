@@ -12,10 +12,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	kagent "github.com/gateway-of-last-resort/keyward/internal/agent"
 	"github.com/gateway-of-last-resort/keyward/internal/audit"
 	"github.com/gateway-of-last-resort/keyward/internal/config"
 	"github.com/gateway-of-last-resort/keyward/internal/keys"
 	"github.com/gateway-of-last-resort/keyward/internal/storage"
+	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
 // Screen identifies the active TUI screen.
@@ -62,6 +64,9 @@ type Model struct {
 	cfgEditor    configModel
 	backupView   backupModel
 	settingsView settingsModel
+
+	// fingerprints currently loaded in the ssh-agent (empty if none/no agent)
+	agentLoaded map[string]bool
 
 	// non-fatal error shown in status bar; errToken guards the auto-dismiss
 	// timer so a stale tick can't clear a newer error early.
@@ -226,7 +231,44 @@ func (m Model) prevTab() tea.Cmd {
 // --- Bubble Tea interface ---
 
 // Init satisfies tea.Model.
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd { return refreshAgentCmd() }
+
+// agentLoadedMsg carries the fingerprints currently loaded in the ssh-agent.
+type agentLoadedMsg struct{ loaded map[string]bool }
+
+// agentAddedMsg is emitted after a key is loaded into the ssh-agent.
+type agentAddedMsg struct{}
+
+// refreshAgentCmd queries the ssh-agent for its loaded fingerprints. A missing
+// agent is not an error — it just yields an empty set.
+func refreshAgentCmd() tea.Cmd {
+	return func() tea.Msg {
+		loaded, err := kagent.LoadedFingerprints()
+		if err != nil {
+			return agentLoadedMsg{loaded: map[string]bool{}}
+		}
+		return agentLoadedMsg{loaded: loaded}
+	}
+}
+
+// addToAgentCmd loads key into the ssh-agent, decrypting with passphrase if set.
+func addToAgentCmd(key keys.Key, passphrase []byte) tea.Cmd {
+	return func() tea.Msg {
+		pem, err := os.ReadFile(key.PrivateKeyPath)
+		if err != nil {
+			return errMsg{err}
+		}
+		defer crypto.ZeroBytes(pem)
+		comment := key.Comment
+		if comment == "" {
+			comment = filepath.Base(key.PrivateKeyPath)
+		}
+		if err := kagent.Add(pem, passphrase, comment); err != nil {
+			return errMsg{err}
+		}
+		return agentAddedMsg{}
+	}
+}
 
 // Update satisfies tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -285,6 +327,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = nil
 		}
 		return m, nil
+
+	case agentLoadedMsg:
+		m.agentLoaded = msg.loaded
+		if m.active == ScreenDetail {
+			m.keyDetail.inAgent = m.agentLoaded[m.keyDetail.key.Fingerprint]
+		}
+		return m, nil
+
+	case agentAddedMsg:
+		// Re-query the agent so the "loaded" status reflects the new key.
+		return m, refreshAgentCmd()
 
 	case keyGeneratedMsg:
 		m.keys = append(m.keys, msg.key)
@@ -376,7 +429,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// refresh detail with updated metadata
 			for _, k := range m.keys {
 				if k.PrivateKeyPath == msg.key.PrivateKeyPath {
-					m.keyDetail = newKeyDetailModel(k, m.report.Results, m.store)
+					m.keyDetail = newKeyDetailModel(k, m.report.Results, m.store, m.agentLoaded[k.Fingerprint])
 					break
 				}
 			}
@@ -467,7 +520,7 @@ func (m Model) navigate(msg navigateMsg) (Model, tea.Cmd) {
 	switch msg.to {
 	case ScreenDetail:
 		if msg.keyIndex >= 0 && msg.keyIndex < len(m.keys) {
-			m.keyDetail = newKeyDetailModel(m.keys[msg.keyIndex], m.report.Results, m.store)
+			m.keyDetail = newKeyDetailModel(m.keys[msg.keyIndex], m.report.Results, m.store, m.agentLoaded[m.keys[msg.keyIndex].Fingerprint])
 		}
 	case ScreenAudit:
 		m.auditView = newAuditModel(m.report)
@@ -670,7 +723,7 @@ func screenHint(s Screen) string {
 	case ScreenKeys:
 		return "↑/↓ navigate  ·  enter detail  ·  / search  ·  i import  ·  q quit  ·  " + nav
 	case ScreenDetail:
-		return "c copy pubkey  ·  e edit metadata  ·  r rotate  ·  d delete  ·  esc back"
+		return "c copy pubkey  ·  e edit  ·  A add to agent  ·  r rotate  ·  d delete  ·  esc back"
 	case ScreenAudit:
 		return "↑/↓ navigate  ·  esc  back  · " + nav
 	case ScreenGenerate:

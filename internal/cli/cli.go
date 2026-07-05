@@ -72,6 +72,8 @@ func Run(version string, args []string, stdout, stderr io.Writer) int {
 		return cmdList(args[1:], stdout, stderr)
 	case "import":
 		return cmdImport(args[1:], stdout, stderr)
+	case "agent":
+		return cmdAgent(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "keyward %s\n", version)
 		return 0
@@ -98,6 +100,9 @@ Commands:
                           the --fail-on threshold
   list [--json]           list discovered SSH keys (alias: keys)
   import <path> [--force] copy an external key into ~/.ssh with 0600 perms
+  agent add <key> [--passphrase-env VAR]
+                          load a key into the running ssh-agent
+  agent list              show which keys are loaded in the ssh-agent
   version                 print the version
   help                    show this help
 `)

@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	golang.org/x/crypto v0.52.0
+	golang.org/x/term v0.43.0
 )
 
 require (

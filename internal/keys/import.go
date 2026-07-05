@@ -32,7 +32,7 @@ type ImportOptions struct {
 func ImportKey(destDir, srcPath string, opts ImportOptions) (Key, error) {
 	// The TUI has no shell to expand ~, so do it here (a no-op once the shell
 	// has already expanded it for the CLI).
-	srcPath = expandTilde(srcPath)
+	srcPath = ExpandTilde(srcPath)
 
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
@@ -88,8 +88,8 @@ func ImportKey(destDir, srcPath string, opts ImportOptions) (Key, error) {
 	return Key{}, fmt.Errorf("%w: imported key not found after parse", ErrImportFailed)
 }
 
-// expandTilde replaces a leading ~ or ~/ with the user's home directory.
-func expandTilde(p string) string {
+// ExpandTilde replaces a leading ~ or ~/ with the user's home directory.
+func ExpandTilde(p string) string {
 	if p != "~" && !strings.HasPrefix(p, "~/") {
 		return p
 	}
