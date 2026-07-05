@@ -52,7 +52,8 @@ func TestImportKey_CopiesWithSecurePerms(t *testing.T) {
 
 func TestImportKey_ExpandsTilde(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	t.Setenv("HOME", home)            // POSIX
+	t.Setenv("USERPROFILE", home)     // Windows (os.UserHomeDir uses this)
 	if _, err := keys.GenerateKeys(home, generateOpts(home, "tilde_key")); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
