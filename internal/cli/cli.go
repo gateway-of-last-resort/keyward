@@ -74,6 +74,8 @@ func Run(version string, args []string, stdout, stderr io.Writer) int {
 		return cmdImport(args[1:], stdout, stderr)
 	case "agent":
 		return cmdAgent(args[1:], stdout, stderr)
+	case "backup":
+		return cmdBackup(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "keyward %s\n", version)
 		return 0
@@ -103,6 +105,8 @@ Commands:
   agent add <key> [--passphrase-env VAR]
                           load a key into the running ssh-agent
   agent list              show which keys are loaded in the ssh-agent
+  backup [--out <path>]   write an encrypted ~/.ssh backup (password from
+                          $KEYWARD_PASSWORD or an interactive prompt)
   version                 print the version
   help                    show this help
 `)
