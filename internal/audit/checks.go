@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -337,4 +338,84 @@ func checkSSHAgent() []AuditResult {
 		})
 	}
 	return results
+}
+
+// configScopes returns the Global block followed by every Host/Match block so a
+// config check can scan the whole file uniformly.
+func configScopes(cfg *config.Config) []*config.Block {
+	scopes := make([]*config.Block, 0, len(cfg.Blocks)+1)
+	scopes = append(scopes, &cfg.Global)
+	for i := range cfg.Blocks {
+		scopes = append(scopes, &cfg.Blocks[i])
+	}
+	return scopes
+}
+
+func checkForwardAgent(cfg *config.Config) []AuditResult {
+	var results []AuditResult
+	for _, scope := range configScopes(cfg) {
+		if value, found := config.GetParam(scope, "ForwardAgent"); found {
+			if strings.EqualFold(value[0], "yes") {
+				results = append(results, AuditResult{
+					Severity: Warning,
+					Category: CategoryConfig,
+					Message:  "ForwardAgent is enabled",
+					Fix:      "Avoid 'ForwardAgent yes'; forward per-connection with 'ssh -A' only to trusted hosts",
+				})
+			}
+		}
+	}
+	return results
+}
+
+func checkUserKnownHostsDevNull(cfg *config.Config) []AuditResult {
+	var results []AuditResult
+	for _, scope := range configScopes(cfg) {
+		if values, found := config.GetParam(scope, "UserKnownHostsFile"); found && slices.Contains(values, "/dev/null") {
+			results = append(results, AuditResult{
+				Severity: Critical,
+				Category: CategoryConfig,
+				Message:  "UserKnownHostsFile is /dev/null (host-key verification disabled)",
+				Fix:      "Remove 'UserKnownHostsFile /dev/null'; it disables host-key checking and enables MITM",
+			})
+		}
+	}
+	return results
+}
+
+// newCheckConfigPermissions verifies that ~/.ssh/config is not readable or
+// writable by group/others (it can leak hostnames, usernames, ProxyCommands).
+func newCheckConfigPermissions(sshDir string) SystemCheck {
+	return func() []AuditResult {
+		path := filepath.Join(sshDir, "config")
+
+		stat, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return []AuditResult{{
+				KeyPath:  path,
+				Severity: Warning,
+				Category: CategorySystem,
+				Message:  "Can't check permissions on the SSH config",
+				Fix:      "Check that " + path + " is accessible",
+			}}
+		}
+		if runtime.GOOS == "windows" {
+			// POSIX mode bits aren't meaningful on Windows; the dir check already
+			// notes this once.
+			return nil
+		}
+		if stat.Mode().Perm()&0o077 != 0 {
+			return []AuditResult{{
+				KeyPath:  path,
+				Severity: Warning,
+				Category: CategorySystem,
+				Message:  "SSH config is accessible by group/others",
+				Fix:      "chmod 600 " + path,
+			}}
+		}
+		return nil
+	}
 }
