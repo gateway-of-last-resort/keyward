@@ -100,8 +100,25 @@ var (
 	editSectionStyle = lipgloss.NewStyle().
 				Foreground(ColorLavender).
 				Bold(true)
-	editHintStyle = lipgloss.NewStyle().Foreground(colorDim)
 )
+
+// hints returns the context-sensitive key hints for the status bar so the
+// detail screen shows one hint line (in the bar) rather than a second copy
+// rendered under the form.
+func (m keyDetailModel) hints() string {
+	switch {
+	case m.addingAgent:
+		return "enter  add  ·  esc  cancel"
+	case m.confirmRotate:
+		return "tab / shift+tab  navigate  ·  enter  next / confirm  ·  esc  cancel"
+	case m.editing:
+		return "↑/↓  switch fields  ·  space  toggle tag  ·  tab  indent  ·  ctrl+s  save  ·  esc  cancel"
+	case m.confirmDelete:
+		return "d  confirm delete  ·  esc  cancel"
+	default:
+		return "c copy pubkey  ·  e edit  ·  A add to agent  ·  r rotate  ·  d delete  ·  esc back"
+	}
+}
 
 func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -467,7 +484,6 @@ func (m keyDetailModel) view() string {
 		if m.agentPassErr != "" {
 			sb.WriteString("\n" + warnMsgStyle.Render(m.agentPassErr))
 		}
-		sb.WriteString("\n" + editHintStyle.Render("enter  add · esc  cancel"))
 		return sb.String()
 	}
 
@@ -476,8 +492,6 @@ func (m keyDetailModel) view() string {
 		sb.WriteString(m.viewEditTags())
 		sb.WriteString("\n\n")
 		sb.WriteString(m.viewEditNote())
-		sb.WriteString("\n\n")
-		sb.WriteString(editHintStyle.Render("↑/↓ switch fields · space toggle tag · tab indent · ctrl+s save · esc cancel"))
 		return sb.String()
 	}
 
@@ -551,11 +565,9 @@ func (m keyDetailModel) viewRotateForm() string {
 		fmt.Fprintf(&sb, "%s  %s\n", lbl, m.rotInputs[i].View())
 	}
 
-	sb.WriteString("\n")
 	if m.rotFormErr != "" {
-		sb.WriteString(formErrorStyle.Render("  ✗  "+m.rotFormErr) + "\n\n")
+		sb.WriteString("\n" + formErrorStyle.Render("  ✗  "+m.rotFormErr))
 	}
-	sb.WriteString(editHintStyle.Render("tab / shift+tab navigate · enter next / confirm · esc cancel"))
 	return sb.String()
 }
 

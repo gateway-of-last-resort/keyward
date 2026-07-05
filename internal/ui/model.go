@@ -741,6 +741,8 @@ func (m Model) statusBar() string {
 		return sep + "\n" + errorBarStyle.Render("✗  "+m.err.Error())
 	}
 	switch m.active {
+	case ScreenDetail:
+		return sep + "\n" + statusBarStyle.Render(m.keyDetail.hints())
 	case ScreenConfig:
 		return sep + "\n" + statusBarStyle.Render(m.cfgEditor.hints())
 	case ScreenBackup:
@@ -760,8 +762,6 @@ func screenHint(s Screen) string {
 		return "enter  unlock  ·  ctrl+c quit"
 	case ScreenKeys:
 		return "↑/↓ navigate  ·  enter detail  ·  / search  ·  i import  ·  q quit  ·  " + nav
-	case ScreenDetail:
-		return "c copy pubkey  ·  e edit  ·  A add to agent  ·  r rotate  ·  d delete  ·  esc back"
 	case ScreenAudit:
 		return "↑/↓ navigate  ·  esc  back  · " + nav
 	case ScreenGenerate:
