@@ -97,16 +97,16 @@ var (
 				BorderForeground(colBorder)
 
 	activeBlockStyle = lipgloss.NewStyle().
-				Background(colSelBg).
-				Foreground(colSelected).
+				Background(ColorSelBg).
+				Foreground(ColorMint).
 				Bold(true)
 
 	activeParamStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("236")).
+				Background(ColorSelBg).
 				Foreground(colText)
 
 	editingParamStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("236")).
+				Background(ColorSelBg).
 				Foreground(ColorMint)
 
 	commentedStyle = lipgloss.NewStyle().Foreground(colBorder)
@@ -689,14 +689,17 @@ func (m configModel) renderBlocks(width int) string {
 			m.renameInput.Width = m.blockEditWidth()
 			sb.WriteString("  " + m.renameInput.View() + "\n")
 		} else {
-			row := "  " + fitRight(b.Pattern, m.blockNameWidth())
+			name := fitRight(b.Pattern, m.blockNameWidth())
+			var row string
 			switch {
 			case focused && i == m.blockCursor:
-				row = activeBlockStyle.Width(width).Render(row)
+				// Accent bar in the gutter + bright fill across the pane.
+				row = selAccentStyle.Render("▎") + activeBlockStyle.Width(width-1).Render(" "+name)
 			case i == m.blockCursor:
-				row = lipgloss.NewStyle().Foreground(colSelected).Bold(true).Width(width).Render(row)
+				// Selected while this pane is unfocused: bar + bold, no fill.
+				row = selAccentStyle.Render("▎") + " " + lipgloss.NewStyle().Foreground(colSelected).Bold(true).Render(name)
 			default:
-				row = dimStyle.Render(row)
+				row = dimStyle.Render("  " + name)
 			}
 			sb.WriteString(row + "\n")
 		}
@@ -777,7 +780,9 @@ func (m configModel) renderParams(width int) string {
 		}
 
 		if isSelected && !isEditing {
-			row = activeParamStyle.Width(width).Render(row)
+			// Accent bar replaces the row's single leading space; the bright fill
+			// spans the rest of the pane so the divider stays put.
+			row = selAccentStyle.Render("▎") + activeParamStyle.Width(width-1).Render(strings.TrimPrefix(row, " "))
 		}
 		sb.WriteString(row + "\n")
 		if isEditing && m.editErr != "" {

@@ -765,6 +765,33 @@ func TestSettings_SSHDirChangeEmitsMsg(t *testing.T) { // §10.9
 	}
 }
 
+// The SSH directory is edited inline in the menu (no separate screen): enter
+// starts editing and marks the model busy so global tab/q are suppressed; esc
+// cancels back to the menu without navigating away.
+func TestSettings_SSHDirInlineEditCancel(t *testing.T) {
+	m := newSettingsModel("master.key", "/ssh", "/vault")
+	m, _ = m.updateMenu(k("down"))  // cursor -> SSH directory
+	m, _ = m.updateMenu(k("enter")) // start inline edit
+	if !m.editingSSHDir {
+		t.Fatal("enter on SSH directory should start inline edit")
+	}
+	if m.step != settingsMenu {
+		t.Fatalf("inline edit must stay on the menu step; got %v", m.step)
+	}
+	if !m.isBusy() {
+		t.Fatal("inline edit should mark settings busy so tab/q are suppressed")
+	}
+	m, cmd := m.update(k("esc"))
+	if m.editingSSHDir || m.isBusy() {
+		t.Fatal("esc should cancel inline edit and clear busy")
+	}
+	if cmd != nil {
+		if _, ok := runCmd(cmd).(navigateMsg); ok {
+			t.Fatal("esc that only cancels inline edit must not navigate away")
+		}
+	}
+}
+
 // A nonexistent path must be rejected in the form and must NOT emit a
 // dir-changed message — otherwise the key list would be blanked and a bad
 // path persisted to prefs.

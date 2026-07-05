@@ -48,7 +48,6 @@ var (
 	colYellow   = ColorWarning
 	colRed      = ColorError
 	colCyan     = colorInfo
-	colSelBg    = ColorSurface
 	colSelected = ColorFg
 )
 
@@ -125,6 +124,16 @@ func padBadgeLabel(label string) string {
 // selectedRow supplies an equal-width gutter so columns stay aligned.
 func selectedRow(body string) string {
 	return selAccentStyle.Render("▎") + selectedRowStyle.Render(" "+body)
+}
+
+// rowGutter returns the two-column left gutter for a form/menu row: a mint accent
+// bar when focused, two spaces otherwise, so focused and unfocused rows keep the
+// same content column.
+func rowGutter(focused bool) string {
+	if focused {
+		return selAccentStyle.Render("▎") + " "
+	}
+	return "  "
 }
 
 // ── Score bar  (purple → lavender → mint gradient) ────────────────────────────

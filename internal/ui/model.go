@@ -298,7 +298,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// not when a config editor input is active (Tab switches key↔value fields there),
 		// and not while typing in the key list (search/import).
 		cfgBusy := m.active == ScreenConfig && m.cfgEditor.isBusy()
-		settingsBusy := m.active == ScreenSettings && m.settingsView.step != settingsMenu
+		settingsBusy := m.active == ScreenSettings && m.settingsView.isBusy()
 		keysBusy := m.active == ScreenKeys && (m.keyList.searching || m.keyList.importing)
 		if !cfgBusy && !settingsBusy && !keysBusy && m.active != ScreenDetail && m.active != ScreenSetup && m.active != ScreenUnlock {
 			switch msg.String() {
