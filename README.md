@@ -17,6 +17,7 @@
 - [Features](#features)
 - [Install](#install)
 - [Usage](#usage)
+- [Command line](#command-line)
 - [Security](#security)
 - [Building from source](#building-from-source)
 - [Contributing](#contributing)
@@ -112,6 +113,8 @@ On first launch you set a master password; this creates an encrypted vault at
 `~/.keyward/master.key`. Subsequent launches unlock with that password.
 
 ```
+keyward                     launch the interactive TUI
+keyward <command> [flags]   run a non-interactive command (see below)
 keyward [--version] [--help]
 ```
 
@@ -124,6 +127,8 @@ keyward [--version] [--help]
 | `Enter` | Open / confirm |
 | `Esc` | Back / cancel |
 | `/` | Search (Keys screen) |
+| `i` | Import an external key (Keys screen) |
+| `A` | Add the selected key to ssh-agent (Detail screen) |
 | `q` | Quit (from the Keys screen) |
 | `Ctrl+C` | Quit from anywhere |
 
@@ -134,6 +139,38 @@ backup/restore, change master password) are shown contextually in the footer.
 > Rotate, delete, and restore modify real files under `~/.ssh`. To experiment
 > safely, point Keyward at a throwaway directory — run it under a sandbox `HOME`
 > or change the SSH directory in Settings before trying destructive actions.
+
+## Command line
+
+Beyond the TUI, Keyward exposes headless subcommands for scripting, CI, and cron:
+
+| Command | What it does |
+| --- | --- |
+| `keyward audit [--json] [--fail-on=<sev>]` | Run the security audit; print text or JSON |
+| `keyward list [--json]` | List discovered SSH keys (alias: `keys`) |
+| `keyward import <path> [--force]` | Copy an external key into `~/.ssh` with `0600` perms |
+| `keyward agent add <key> [--passphrase-env VAR]` | Load a key into the running ssh-agent |
+| `keyward agent list` | Show which keys are currently loaded in the agent |
+| `keyward backup [--out <path>]` | Write an encrypted `~/.ssh` backup |
+
+**Audit in CI.** `--fail-on=<critical\|warning\|info>` makes the audit exit
+non-zero when a finding meets that severity, so it can gate a pipeline:
+
+```bash
+keyward audit --fail-on=critical      # fail the build only on critical findings
+keyward audit --json | jq '.grade'    # machine-readable report
+```
+
+**Passwords for scripts.** `keyward backup` reads the master password from
+`$KEYWARD_PASSWORD` (or prompts if unset). `keyward agent add` takes the key
+passphrase from the variable named by `--passphrase-env` (export it first and
+pass the variable **name**, not the passphrase), or prompts when the flag is
+omitted:
+
+```bash
+export KEYWARD_PASSWORD='…'
+keyward backup --out /mnt/usb/ssh-backup.tar.age
+```
 
 ## Security
 

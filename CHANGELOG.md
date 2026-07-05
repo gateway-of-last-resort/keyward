@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-05
+
+Keyward gains a command-line interface for automation (CI, cron, scripts) and
+rounds out the key lifecycle with import and ssh-agent support.
+
+### Added
+
+- **Command-line interface** — headless subcommands that reuse the same engine
+  as the TUI:
+  - `keyward audit [--json] [--fail-on=critical|warning|info]` — run the audit
+    as text or JSON; `--fail-on` exits non-zero when a finding meets the
+    threshold, for CI gating.
+  - `keyward list [--json]` — list discovered SSH keys (alias `keys`).
+  - `keyward import <path> [--force]` — copy an external key into `~/.ssh`.
+  - `keyward agent add <key> [--passphrase-env VAR]` / `keyward agent list` —
+    load a key into the ssh-agent and see what's loaded.
+  - `keyward backup [--out <path>]` — write an encrypted backup; the master
+    password comes from `$KEYWARD_PASSWORD` or a prompt.
+- **Import keys** — bring an external key under management from the Keys screen
+  (`i`) or the CLI; it's copied in with `0600` permissions and a `.pub`.
+- **ssh-agent integration** — add a key to the agent from the key detail screen
+  (`A`), with a "loaded" indicator; a matching CLI verb.
+- **New audit checks** — SSH config file permissions, `ForwardAgent yes`, and
+  `UserKnownHostsFile /dev/null`.
+
+### Changed
+
+- Non-fatal error banners auto-dismiss after a few seconds instead of lingering
+  until the next keypress.
+
 ## [0.3.0] - 2026-07-05
 
 A launch-focused release: a demo, trustworthy installs, and contributor
@@ -123,7 +153,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/gateway-of-last-resort/keyward/compare/v0.1.0...v0.1.5
