@@ -17,6 +17,9 @@ type keyListModel struct {
 	cursor        int
 	searching     bool
 	query         string
+	sshDir        string
+	importing     bool
+	importPath    string
 }
 
 type keyListItem struct {
@@ -24,7 +27,7 @@ type keyListItem struct {
 	severity audit.Severity
 }
 
-func newKeyListModel(ks []keys.Key, results []audit.AuditResult) keyListModel {
+func newKeyListModel(ks []keys.Key, results []audit.AuditResult, sshDir string) keyListModel {
 	worst := map[string]audit.Severity{}
 	for _, r := range results {
 		cur := worst[r.KeyPath]
@@ -41,7 +44,7 @@ func newKeyListModel(ks []keys.Key, results []audit.AuditResult) keyListModel {
 	for i, k := range ks {
 		items[i] = keyListItem{key: k, severity: worst[k.PrivateKeyPath]}
 	}
-	return keyListModel{items: items}
+	return keyListModel{items: items, sshDir: sshDir}
 }
 
 // --- keys-screen-specific styles ---
@@ -58,6 +61,9 @@ const (
 func (m keyListModel) update(msg tea.Msg) (keyListModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.importing {
+			return m.updateImport(msg)
+		}
 		if m.searching {
 			return m.updateSearch(msg)
 		}
@@ -85,6 +91,9 @@ func (m keyListModel) updateNav(msg tea.KeyMsg) (keyListModel, tea.Cmd) {
 		m.searching = true
 		m.query = ""
 		m.cursor = 0
+	case "i":
+		m.importing = true
+		m.importPath = ""
 	case "q":
 		return m, tea.Quit
 	case "esc":
@@ -114,6 +123,33 @@ func (m keyListModel) updateSearch(msg tea.KeyMsg) (keyListModel, tea.Cmd) {
 		if len(msg.Runes) > 0 {
 			m.query += string(msg.Runes)
 			m.cursor = 0
+		}
+	}
+	return m, nil
+}
+
+// updateImport handles the inline "import a key" path prompt (opened with 'i').
+func (m keyListModel) updateImport(msg tea.KeyMsg) (keyListModel, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		path := strings.TrimSpace(m.importPath)
+		m.importing = false
+		m.importPath = ""
+		if path == "" {
+			return m, nil
+		}
+		return m, importKeyCmd(m.sshDir, path)
+	case "esc":
+		m.importing = false
+		m.importPath = ""
+	case "backspace":
+		if len(m.importPath) > 0 {
+			r := []rune(m.importPath)
+			m.importPath = string(r[:len(r)-1])
+		}
+	default:
+		if len(msg.Runes) > 0 {
+			m.importPath += string(msg.Runes)
 		}
 	}
 	return m, nil
@@ -180,15 +216,19 @@ func (m keyListModel) view() string {
 		scrollHint = dimStyle.Render(fmt.Sprintf("  %d–%d of %d", start+1, end, len(visible)))
 	}
 
-	// search bar
-	searchBar := ""
-	if m.searching {
-		searchBar = "\n" + labelStyle.Render("/") + " " + m.query + "█"
-	} else if m.query != "" {
-		searchBar = "\n" + dimStyle.Render("filter: "+m.query+"   (/ to edit · esc clear)")
+	// input bar: import prompt takes priority over the search/filter line.
+	inputBar := ""
+	switch {
+	case m.importing:
+		inputBar = "\n" + labelStyle.Render("import key:") + " " + m.importPath + "█" +
+			dimStyle.Render("   (path to a private key · enter · esc)")
+	case m.searching:
+		inputBar = "\n" + labelStyle.Render("/") + " " + m.query + "█"
+	case m.query != "":
+		inputBar = "\n" + dimStyle.Render("filter: "+m.query+"   (/ to edit · esc clear)")
 	}
 
-	return header + "\n" + rows.String() + scrollHint + searchBar
+	return header + "\n" + rows.String() + scrollHint + inputBar
 }
 
 func (m keyListModel) renderRow(item visibleItem, selected bool) string {

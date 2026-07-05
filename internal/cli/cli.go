@@ -70,6 +70,8 @@ func Run(version string, args []string, stdout, stderr io.Writer) int {
 		return cmdAudit(args[1:], stdout, stderr)
 	case "list", "keys":
 		return cmdList(args[1:], stdout, stderr)
+	case "import":
+		return cmdImport(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "keyward %s\n", version)
 		return 0
@@ -95,6 +97,7 @@ Commands:
                           run the security audit; exit 1 if a finding meets
                           the --fail-on threshold
   list [--json]           list discovered SSH keys (alias: keys)
+  import <path> [--force] copy an external key into ~/.ssh with 0600 perms
   version                 print the version
   help                    show this help
 `)
