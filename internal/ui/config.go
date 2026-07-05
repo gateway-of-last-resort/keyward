@@ -56,7 +56,7 @@ func newConfigModel(cfg *config.Config, sshDir string) configModel {
 	edit.CharLimit = 512
 
 	addBlock := textinput.New()
-	addBlock.Placeholder = "host pattern  (e.g. myserver)"
+	addBlock.Placeholder = "host pattern (e.g. myserv)"
 	addBlock.CharLimit = 128
 
 	rename := textinput.New()

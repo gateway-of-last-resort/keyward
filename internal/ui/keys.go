@@ -246,17 +246,12 @@ func (m keyListModel) renderRow(item visibleItem, selected bool) string {
 			audit.Warning:  "⚠",
 			audit.Info:     "i",
 		}[item.severity]
-		label := icon + " " + string(item.severity)
-		const badgeTextWidth = 10
-		if runes := []rune(label); len(runes) < badgeTextWidth {
-			label += strings.Repeat(" ", badgeTextWidth-len(runes))
-		}
-		statusStr = badge.Render(label)
+		statusStr = badge.Render(padBadgeLabel(icon + " " + string(item.severity)))
 	} else {
-		statusStr = okStyle.Render("✓ OK")
+		statusStr = okBadgeStyle.Render(padBadgeLabel("✓ OK"))
 	}
 
-	row := fmt.Sprintf("  %-*s  %-*s  %-*s  %s",
+	body := fmt.Sprintf("%-*s  %-*s  %-*s  %s",
 		colName, name,
 		colAlgo, algo,
 		colBits, bits,
@@ -264,9 +259,9 @@ func (m keyListModel) renderRow(item visibleItem, selected bool) string {
 	)
 
 	if selected {
-		return selectedRowStyle.Render(row)
+		return selectedRow(body)
 	}
-	return row
+	return "  " + body
 }
 
 // fitLeft shortens s to n runes, prefixing with "…" if truncated.

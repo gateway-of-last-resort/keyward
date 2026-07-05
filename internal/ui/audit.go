@@ -111,14 +111,10 @@ func (m auditModel) view() string {
 		selected := i == m.cursor
 
 		badge := badgeForSeverity(res.Severity)
-		prefix := "  "
+		body := badge + "  " + res.Message
+		line := "  " + body
 		if selected {
-			prefix = dimStyle.Render("▸ ")
-		}
-
-		line := prefix + badge + "  " + res.Message
-		if selected {
-			line = selectedRowStyle.Render(line)
+			line = selectedRow(body)
 		}
 		sb.WriteString(line + "\n")
 
@@ -144,14 +140,8 @@ func badgeForSeverity(s audit.Severity) string {
 		audit.Warning:  "⚠",
 		audit.Info:     "i",
 	}
-	const badgeTextWidth = 10
 	if style, ok := severityBadge[s]; ok {
-		label := icons[s] + " " + string(s)
-		runes := []rune(label)
-		if len(runes) < badgeTextWidth {
-			label += strings.Repeat(" ", badgeTextWidth-len(runes))
-		}
-		return style.Render(label)
+		return style.Render(padBadgeLabel(icons[s] + " " + string(s)))
 	}
-	return okStyle.Render("✓ OK")
+	return okBadgeStyle.Render(padBadgeLabel("✓ OK"))
 }

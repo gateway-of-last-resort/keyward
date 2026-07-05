@@ -18,6 +18,7 @@ var (
 	// Base
 	ColorBg      = lipgloss.Color("#0F0F13")
 	ColorSurface = lipgloss.Color("#1A1A1F")
+	ColorSelBg   = lipgloss.Color("#2E2B45") // selection highlight — brighter, faint purple tint
 	ColorBorder  = lipgloss.Color("#2A2A33")
 	ColorFg      = lipgloss.Color("#E0E0E8")
 
@@ -61,9 +62,12 @@ var (
 	okStyle = lipgloss.NewStyle().Foreground(ColorMint)
 
 	selectedRowStyle = lipgloss.NewStyle().
-				Background(ColorSurface).
+				Background(ColorSelBg).
 				Foreground(ColorMint).
 				Bold(true)
+
+	// selAccentStyle draws the mint bar in the selected row's left gutter.
+	selAccentStyle = lipgloss.NewStyle().Foreground(ColorMint).Bold(true)
 
 	sectionHeaderStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -94,7 +98,34 @@ var (
 			Foreground(ColorLavender).
 			Padding(0, 1),
 	}
+
+	// okBadgeStyle is the "no issues" pill; it mirrors severityBadge so the
+	// Status column reads as a consistent row of badges.
+	okBadgeStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("#06251A")).
+			Foreground(ColorMint).
+			Padding(0, 1)
 )
+
+// badgeTextWidth is the padded rune width shared by every status badge so the
+// pills line up in a column ("✗ CRITICAL" is the widest at 10).
+const badgeTextWidth = 10
+
+// padBadgeLabel right-pads label with spaces to badgeTextWidth runes.
+func padBadgeLabel(label string) string {
+	if runes := []rune(label); len(runes) < badgeTextWidth {
+		return label + strings.Repeat(" ", badgeTextWidth-len(runes))
+	}
+	return label
+}
+
+// selectedRow renders body as the highlighted row of a list: a mint accent bar
+// in the left gutter followed by body on the selection background. body must not
+// include the leading two-space gutter that unselected rows carry ("  " + body);
+// selectedRow supplies an equal-width gutter so columns stay aligned.
+func selectedRow(body string) string {
+	return selAccentStyle.Render("▎") + selectedRowStyle.Render(" "+body)
+}
 
 // ── Score bar  (purple → lavender → mint gradient) ────────────────────────────
 
