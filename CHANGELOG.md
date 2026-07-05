@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-05
+
+Keyward gains a known_hosts viewer and a cohesive pass over the TUI's selection
+styling.
+
+### Added
+
+- **Known Hosts screen** — browse `~/.ssh/known_hosts` entries (host, key type,
+  SHA256 fingerprint, `@revoked` / `@cert-authority` markers, hashed hosts) and
+  forget a host with `d` (two-step confirm). The file is rewritten atomically
+  with its original mode preserved and neighbouring lines left byte-for-byte
+  unchanged. New tab between Generate and Backup.
+
+### Changed
+
+- **Unified selection style** across the list and form screens: a mint accent
+  bar plus a brighter highlight replace the old dim rows and `>` field markers,
+  and the "✓ OK" status is now a badge matching the severity pills.
+- **SSH directory** is edited inline on the Settings screen (the separate editor
+  screen is gone), with a bounded, horizontally-scrolling input so a long path
+  never widens the frame.
+
+### Fixed
+
+- The key detail screen no longer renders a duplicated hint line while editing
+  metadata, rotating, or adding to the agent; the hint now shows once in the
+  status bar.
+
 ## [0.4.0] - 2026-07-05
 
 Keyward gains a command-line interface for automation (CI, cron, scripts) and
@@ -153,7 +181,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.1.5...v0.2.0

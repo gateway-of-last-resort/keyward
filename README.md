@@ -55,6 +55,9 @@ binary.
 - **Security audit** — graded A–F report covering weak keys, missing
   passphrases, file permissions, and risky config directives, each with a
   concrete `fix:` hint.
+- **Known hosts viewer** — browse `~/.ssh/known_hosts` (host, key type,
+  fingerprint, `@revoked` / `@cert-authority` markers) and forget a host in
+  place; the file is rewritten atomically with its mode preserved.
 - **Encrypted backups** — age-encrypted `.tar.age` snapshots of your `~/.ssh`
   directory plus key metadata, restorable from within the TUI.
 - **Encrypted metadata vault** — tags and notes are stored encrypted at rest,
@@ -122,7 +125,7 @@ keyward [--version] [--help]
 
 | Key | Action |
 | --- | --- |
-| `Tab` / `Shift+Tab` | Cycle screens: Keys → Audit → Config → Generate → Backup → Settings |
+| `Tab` / `Shift+Tab` | Cycle screens: Keys → Audit → Config → Generate → Known Hosts → Backup → Settings |
 | `↑/↓` or `j/k` | Move within a list |
 | `Enter` | Open / confirm |
 | `Esc` | Back / cancel |
@@ -133,7 +136,8 @@ keyward [--version] [--help]
 | `Ctrl+C` | Quit from anywhere |
 
 Per-screen actions (generate, rotate, delete, copy public key, edit config,
-backup/restore, change master password) are shown contextually in the footer.
+forget a known host, backup/restore, change master password) are shown
+contextually in the footer.
 
 > [!WARNING]
 > Rotate, delete, and restore modify real files under `~/.ssh`. To experiment
