@@ -148,6 +148,8 @@ contextually in the footer.
 
 Beyond the TUI, Keyward exposes headless subcommands for scripting, CI, and cron:
 
+![Keyward CLI demo](assets/cli-demo.gif)
+
 | Command | What it does |
 | --- | --- |
 | `keyward audit [--json] [--fail-on=<sev>]` | Run the security audit; print text or JSON |
