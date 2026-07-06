@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-06
+
+Completes the selection-style redesign started in 0.5.0 so every screen shares
+the mint accent-bar idiom.
+
+### Changed
+
+- **Detail-screen forms** — rotate, edit-metadata, and add-to-agent now use the
+  mint accent-bar selection idiom instead of the old `>` field markers. The note
+  editor shows focus by turning its own left strip mint rather than adding a bar.
+- **Config editor** — host and parameter add/rename/edit inputs drop the `>`
+  markers for the accent bar; the selected parameter's bar shows only while the
+  Parameters column is active, and the Hosts list dims when focus is on
+  Parameters (the selected host stays highlighted).
+- **Unlock and first-run setup** screens — the password fields drop the `>`
+  marker for the accent bar, matching the rest of the TUI.
+
 ## [0.5.0] - 2026-07-05
 
 Keyward gains a known_hosts viewer and a cohesive pass over the TUI's selection
@@ -181,7 +198,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.2.0...v0.3.0
