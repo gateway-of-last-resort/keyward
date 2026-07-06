@@ -40,15 +40,14 @@ var (
 // ── Aliases used by screen files ─────────────────────────────────────────────
 
 var (
-	colBorder   = ColorBorder
-	colText     = ColorFg
-	colTextDim  = colorDim
-	colLabel    = ColorLavender
-	colGreen    = ColorMint
-	colYellow   = ColorWarning
-	colRed      = ColorError
-	colCyan     = colorInfo
-	colSelected = ColorFg
+	colBorder  = ColorBorder
+	colText    = ColorFg
+	colTextDim = colorDim
+	colLabel   = ColorLavender
+	colGreen   = ColorMint
+	colYellow  = ColorWarning
+	colRed     = ColorError
+	colCyan    = colorInfo
 )
 
 // ── Shared styles ─────────────────────────────────────────────────────────────

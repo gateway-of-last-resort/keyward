@@ -42,12 +42,14 @@ type setupModel struct {
 func newSetupModel(vaultDir, masterKeyPath string) setupModel {
 	pass := textinput.New()
 	pass.Placeholder = "choose a strong password"
+	pass.Prompt = "" // focus is shown by the row's accent bar, not a "> " prompt
 	pass.EchoMode = textinput.EchoPassword
 	pass.EchoCharacter = '•'
 	pass.Focus()
 
 	conf := textinput.New()
 	conf.Placeholder = "repeat password"
+	conf.Prompt = ""
 	conf.EchoMode = textinput.EchoPassword
 	conf.EchoCharacter = '•'
 
@@ -180,9 +182,9 @@ func (m setupModel) view() string {
 		return sb.String()
 	}
 
-	sb.WriteString("  " + formLabelStyle.Render("Master password"))
+	sb.WriteString(rowGutter(m.focused == 0) + formLabelStyle.Render("Master password"))
 	sb.WriteString("  " + m.passInput.View() + "\n")
-	sb.WriteString("  " + formLabelStyle.Render("Confirm password"))
+	sb.WriteString(rowGutter(m.focused == 1) + formLabelStyle.Render("Confirm password"))
 	sb.WriteString("  " + m.confInput.View() + "\n")
 
 	if m.formErr != nil {
@@ -209,6 +211,7 @@ type unlockModel struct {
 func newUnlockModel(vaultDir, masterKeyPath string) unlockModel {
 	pass := textinput.New()
 	pass.Placeholder = "master password"
+	pass.Prompt = "" // focus is shown by the row's accent bar, not a "> " prompt
 	pass.EchoMode = textinput.EchoPassword
 	pass.EchoCharacter = '•'
 	pass.Focus()
@@ -300,7 +303,7 @@ func (m unlockModel) view() string {
 		return sb.String()
 	}
 
-	sb.WriteString("  " + formLabelStyle.Render("Master password"))
+	sb.WriteString(rowGutter(true) + formLabelStyle.Render("Master password"))
 	sb.WriteString("  " + m.passInput.View() + "\n")
 
 	if m.formErr != nil {

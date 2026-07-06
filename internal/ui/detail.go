@@ -71,6 +71,10 @@ func newKeyDetailModel(k keys.Key, results []audit.AuditResult, store *storage.S
 	ta.MaxHeight = 8
 	ta.CharLimit = 0
 	ta.KeyMap.InsertNewline.SetEnabled(true)
+	// Focus is shown by the textarea's own left strip turning mint (dim when
+	// blurred), instead of a separate accent bar before the "Note" label.
+	ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(ColorMint)
+	ta.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(colorDim)
 	ta.Blur()
 	return keyDetailModel{key: k, findings: findings, meta: meta, noteInput: ta, inAgent: inAgent}
 }
@@ -88,12 +92,12 @@ var (
 
 	tagSelectedStyle = lipgloss.NewStyle().Foreground(ColorMint).Bold(true)
 	tagCursorStyle   = lipgloss.NewStyle().
-				Background(ColorSurface).
+				Background(ColorSelBg).
 				Foreground(ColorFg).
 				Bold(true).
 				Padding(0, 1)
 	tagActiveCursorStyle = lipgloss.NewStyle().
-				Background(ColorSurface).
+				Background(ColorSelBg).
 				Foreground(ColorMint).
 				Bold(true).
 				Padding(0, 1)
@@ -181,6 +185,7 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 func (m keyDetailModel) enterAgentPrompt() keyDetailModel {
 	pass := textinput.New()
 	pass.Placeholder = "key passphrase"
+	pass.Prompt = "" // focus is shown by the row's accent bar, not a "> " prompt
 	pass.EchoMode = textinput.EchoPassword
 	pass.EchoCharacter = '•'
 	pass.Width = 40
@@ -216,18 +221,21 @@ func (m keyDetailModel) updateAgentPrompt(msg tea.KeyMsg) (keyDetailModel, tea.C
 func (m keyDetailModel) enterRotateForm() keyDetailModel {
 	comment := textinput.New()
 	comment.Placeholder = "key comment"
+	comment.Prompt = "" // focus is shown by the row's accent bar, not a "> " prompt
 	comment.SetValue(m.key.Comment)
 	comment.Focus()
 	comment.Width = 40
 
 	pass := textinput.New()
 	pass.Placeholder = "new passphrase (empty = none)"
+	pass.Prompt = ""
 	pass.EchoMode = textinput.EchoPassword
 	pass.EchoCharacter = '•'
 	pass.Width = 40
 
 	conf := textinput.New()
 	conf.Placeholder = "confirm passphrase"
+	conf.Prompt = ""
 	conf.EchoMode = textinput.EchoPassword
 	conf.EchoCharacter = '•'
 	conf.Width = 40
@@ -480,7 +488,7 @@ func (m keyDetailModel) view() string {
 
 	if m.addingAgent {
 		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Add to ssh-agent") + "\n\n")
-		fmt.Fprintf(&sb, "%s  %s\n", detailLabelStyle.Render("Passphrase"), m.agentPass.View())
+		fmt.Fprintf(&sb, "%s%s  %s\n", rowGutter(true), detailLabelStyle.Render("Passphrase"), m.agentPass.View())
 		if m.agentPassErr != "" {
 			sb.WriteString("\n" + warnMsgStyle.Render(m.agentPassErr))
 		}
@@ -556,13 +564,11 @@ func (m keyDetailModel) viewRotateForm() string {
 	for i := range m.rotInputs {
 		m.rotInputs[i].Width = inputWidth
 		focused := m.rotateFocus == i
-		var lbl string
-		if focused {
-			lbl = detailLabelStyle.Foreground(ColorMint).Render("> " + labels[i])
-		} else {
-			lbl = detailLabelStyle.Render(labels[i])
-		}
-		fmt.Fprintf(&sb, "%s  %s\n", lbl, m.rotInputs[i].View())
+		fmt.Fprintf(&sb, "%s%s  %s\n",
+			rowGutter(focused),
+			detailLabelStyle.Render(labels[i]),
+			m.rotInputs[i].View(),
+		)
 	}
 
 	if m.rotFormErr != "" {
@@ -572,10 +578,7 @@ func (m keyDetailModel) viewRotateForm() string {
 }
 
 func (m keyDetailModel) viewEditTags() string {
-	focusMarker := "  "
-	if m.editFocus == 0 {
-		focusMarker = "> "
-	}
+	gutter := rowGutter(m.editFocus == 0)
 	lbl := editSectionStyle.Render("Tags")
 
 	var tags strings.Builder
@@ -604,16 +607,14 @@ func (m keyDetailModel) viewEditTags() string {
 		}
 	}
 
-	return focusMarker + lbl + "  " + tags.String()
+	return gutter + lbl + "  " + tags.String()
 }
 
 func (m keyDetailModel) viewEditNote() string {
-	focusMarker := "  "
-	if m.editFocus == 1 {
-		focusMarker = "> "
-	}
+	// Focus is shown by the textarea's left strip turning mint, so the label
+	// keeps a plain 2-col indent (no accent bar) and aligns with Tags.
 	lbl := editSectionStyle.Render("Note ")
-	return focusMarker + lbl + "\n" + m.noteInput.View()
+	return "  " + lbl + "\n" + m.noteInput.View()
 }
 
 // wrapText wraps s to lines of at most width runes.

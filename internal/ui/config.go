@@ -53,20 +53,26 @@ type configModel struct {
 
 func newConfigModel(cfg *config.Config, sshDir string) configModel {
 	edit := textinput.New()
+	edit.Prompt = ""
 	edit.CharLimit = 512
 
+	// add-host / rename: mint accent bar on the left, no "> " prompt, no bg fill.
 	addBlock := textinput.New()
+	addBlock.Prompt = ""
 	addBlock.Placeholder = "host pattern (e.g. myserv)"
 	addBlock.CharLimit = 128
 
 	rename := textinput.New()
+	rename.Prompt = ""
 	rename.CharLimit = 128
 
 	addKey := textinput.New()
+	addKey.Prompt = ""
 	addKey.Placeholder = "key (e.g. IdentityFile)"
 	addKey.CharLimit = 64
 
 	addVal := textinput.New()
+	addVal.Prompt = ""
 	addVal.Placeholder = "value"
 	addVal.CharLimit = 256
 
@@ -101,13 +107,16 @@ var (
 				Foreground(ColorMint).
 				Bold(true)
 
+	// nameStyle is the bright-white default for host names and parameter values.
+	nameStyle = lipgloss.NewStyle().Foreground(colText)
+
 	activeParamStyle = lipgloss.NewStyle().
 				Background(ColorSelBg).
 				Foreground(colText)
 
-	editingParamStyle = lipgloss.NewStyle().
-				Background(ColorSelBg).
-				Foreground(ColorMint)
+	// editingParamStyle marks the key while its value is being edited in place:
+	// mint text, no bg fill (the mint accent bar carries the selection).
+	editingParamStyle = lipgloss.NewStyle().Foreground(ColorMint)
 
 	commentedStyle = lipgloss.NewStyle().Foreground(colBorder)
 	paramKeyStyle  = lipgloss.NewStyle().Foreground(colLabel)
@@ -621,17 +630,18 @@ func (m configModel) paramValueWidth() int {
 	return w
 }
 
-// paramEditWidth is the edit-input window: the "> " prompt takes its 2 columns
-// out of the value window, so the row ends where the static row ends.
+// paramEditWidth is the edit-input window. The accent bar replaces the row's
+// leading space rather than eating into the value column, so the edit input
+// spans the full value window and the row ends where the static row ends.
 func (m configModel) paramEditWidth() int {
-	return m.paramValueWidth() - 2
+	return m.paramValueWidth()
 }
 
-// addParamInputWidth sizes the add-param key/value inputs. Layout: 1 (lead) +
-// 7 (label) + 1 (gap) + 2 ("> " prompt) + input + wallBuffer = pane width.
+// addParamInputWidth sizes the add-param key/value inputs. Layout: 2 (accent
+// gutter) + 7 (label) + 1 (gap) + input + wallBuffer = pane width.
 func (m configModel) addParamInputWidth() int {
 	_, rightW := m.paneWidths()
-	w := rightW - 11 - wallBuffer
+	w := rightW - 10 - wallBuffer
 	if w < 10 {
 		w = 10
 	}
@@ -684,21 +694,27 @@ func (m configModel) renderBlocks(width int) string {
 	for i := start; i < end; i++ {
 		b := m.cfg.Blocks[i]
 		if m.renamingBlock && focused && i == m.blockCursor {
-			// Indent as a static row; the "> " prompt takes 2 columns out of
-			// the name window so the row never reaches the pane divider.
+			// Rename in place: the mint accent bar stays but the bg fill drops,
+			// and there is no "> " prompt. The bar takes the same 2 columns.
 			m.renameInput.Width = m.blockEditWidth()
-			sb.WriteString("  " + m.renameInput.View() + "\n")
+			sb.WriteString(rowGutter(true) + m.renameInput.View() + "\n")
 		} else {
 			name := fitRight(b.Pattern, m.blockNameWidth())
 			var row string
 			switch {
-			case focused && i == m.blockCursor:
-				// Accent bar in the gutter + bright fill across the pane.
+			case focused && i == m.blockCursor && !m.addingBlock:
+				// Selected while the Hosts pane is focused: bar + bright fill.
+				// (While adding, no existing row is highlighted — only the new one.)
 				row = selAccentStyle.Render("▎") + activeBlockStyle.Width(width-1).Render(" "+name)
-			case i == m.blockCursor:
-				// Selected while this pane is unfocused: bar + bold, no fill.
-				row = selAccentStyle.Render("▎") + " " + lipgloss.NewStyle().Foreground(colSelected).Bold(true).Render(name)
+			case i == m.blockCursor && !m.addingBlock:
+				// Selected while the Params pane is focused: bar + bold name (the
+				// anchor stays bright) while the rest of the Hosts list dims.
+				row = selAccentStyle.Render("▎") + " " + nameStyle.Bold(true).Render(name)
+			case focused:
+				// Hosts pane focused: names are bright white.
+				row = nameStyle.Render("  " + name)
 			default:
+				// Params pane focused: the unselected Hosts dim.
 				row = dimStyle.Render("  " + name)
 			}
 			sb.WriteString(row + "\n")
@@ -709,8 +725,10 @@ func (m configModel) renderBlocks(width int) string {
 	}
 
 	if m.addingBlock {
+		// The new row shows only the mint accent bar (no bg fill), so it's the
+		// single highlighted row while typing the pattern.
 		m.addBlockInput.Width = m.blockEditWidth()
-		sb.WriteString("  " + m.addBlockInput.View() + "\n")
+		sb.WriteString(rowGutter(true) + m.addBlockInput.View() + "\n")
 	}
 
 	return sb.String()
@@ -754,35 +772,33 @@ func (m configModel) renderParams(width int) string {
 
 	for i := start; i < end; i++ {
 		t := tokens[i]
-		isSelected := focused && i == m.paramCursor
-		isEditing := m.editing && i == m.paramCursor
+		isCursor := i == m.paramCursor
+		isEditing := m.editing && isCursor
 
 		var row string
 		switch {
 		case isEditing:
-			// The "> " prompt takes its 2 columns out of the value window
-			// (paramEditWidth), so the row ends exactly where a static row does.
+			// Edit in place: mint bar replaces the leading space, no "> " prompt,
+			// no bg fill; the value input spans the full value window.
 			m.editInput.Width = m.paramEditWidth()
-			row = fmt.Sprintf(" %s  %s",
+			row = selAccentStyle.Render("▎") + fmt.Sprintf("%s  %s",
 				editingParamStyle.Render(fmt.Sprintf("%-20s", t.Key)),
 				m.editInput.View(),
 			)
 		case t.Type == config.COMMENT:
 			row = fmt.Sprintf(" %s", commentedStyle.Render(fitRight(t.Raw, width-1)))
+		case focused && isCursor && !m.addingParam:
+			// Selected while the Params pane is focused: bar + bright fill. The
+			// bar shows only while Params is the active column — when focus is on
+			// Hosts this row falls through to the plain bright style below.
+			body := fmt.Sprintf("%-20s  %s", t.Key, fitRight(t.Value, valueW))
+			row = selAccentStyle.Render("▎") + activeParamStyle.Width(width-1).Render(body)
 		default:
-			// Truncate to the same width as the edit window so an overlong
-			// value can never push the frame out, and the value column lines
-			// up whether it's being shown or edited.
+			// Every other param row: lavender key + bright value — no bar, no dim.
 			row = fmt.Sprintf(" %s  %s",
 				paramKeyStyle.Render(fmt.Sprintf("%-20s", t.Key)),
-				fitRight(t.Value, valueW),
+				nameStyle.Render(fitRight(t.Value, valueW)),
 			)
-		}
-
-		if isSelected && !isEditing {
-			// Accent bar replaces the row's single leading space; the bright fill
-			// spans the rest of the pane so the divider stays put.
-			row = selAccentStyle.Render("▎") + activeParamStyle.Width(width-1).Render(strings.TrimPrefix(row, " "))
 		}
 		sb.WriteString(row + "\n")
 		if isEditing && m.editErr != "" {
@@ -798,11 +814,13 @@ func (m configModel) renderParams(width int) string {
 		inputW := m.addParamInputWidth()
 		m.addParamInputs[0].Width = inputW
 		m.addParamInputs[1].Width = inputW
-		fmt.Fprintf(&sb, " %s %s\n",
+		fmt.Fprintf(&sb, "%s%s %s\n",
+			rowGutter(m.addParamFocus == 0),
 			labelStyle.Render("+ Key  "),
 			m.addParamInputs[0].View(),
 		)
-		fmt.Fprintf(&sb, " %s %s\n",
+		fmt.Fprintf(&sb, "%s%s %s\n",
+			rowGutter(m.addParamFocus == 1),
 			labelStyle.Render("  Value"),
 			m.addParamInputs[1].View(),
 		)
