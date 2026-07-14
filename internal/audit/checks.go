@@ -16,6 +16,30 @@ import (
 
 const maxKeyAge = 12 * 30 * 24 * time.Hour
 
+// posixPermsEnforceable reports whether POSIX permission bits (0600 / 0700 /
+// 0o077) are meaningful on this platform. On Windows os.FileMode is synthesized
+// from file attributes and never matches these patterns, so real access is
+// governed by NTFS ACLs instead. When this returns false the mode-equality
+// checks are skipped and checkPlatformPermissionModel emits one Info describing
+// the model, rather than each check silently skipping or raising a false alarm.
+func posixPermsEnforceable() bool { return runtime.GOOS != "windows" }
+
+// checkPlatformPermissionModel emits a single Info on platforms where Keyward
+// cannot verify POSIX permission bits (Windows), so the audit still tells the
+// user how their SSH files are actually protected instead of quietly skipping
+// the permission checks. It returns nothing where the bits are enforceable.
+func checkPlatformPermissionModel() []AuditResult {
+	if posixPermsEnforceable() {
+		return nil
+	}
+	return []AuditResult{{
+		Severity: Info,
+		Category: CategorySystem,
+		Message:  "File access on Windows is governed by NTFS ACLs, not POSIX permission bits; the 0600/0700 checks are skipped",
+		Fix:      "Verify ~/.ssh and your private keys are restricted to your user account (Properties -> Security)",
+	}}
+}
+
 func resolveKeyPath(key keys.Key) string {
 	keyPath := key.PrivateKeyPath
 	if keyPath == "" {
@@ -171,10 +195,11 @@ func checkPermissions(key keys.Key) []AuditResult {
 				Message:  "Private key does not exist or damaged",
 				Fix:      "Make sure file exists and not damaged",
 			})
-		} else if runtime.GOOS != "windows" && stat.Mode().Perm() != 0600 {
-			// On Windows os.FileMode is synthesized from FILE_ATTRIBUTE_READONLY
-			// and never equals 0600, so a POSIX-bit comparison would flag every
-			// key Critical regardless of the real ACL. Skip it there.
+		} else if posixPermsEnforceable() && stat.Mode().Perm() != 0600 {
+			// On Windows the mode is synthesized and never equals 0600, so a
+			// POSIX-bit comparison would flag every key Critical regardless of
+			// the real ACL; posixPermsEnforceable() gates it off there and
+			// checkPlatformPermissionModel explains the model once instead.
 			results = append(results, AuditResult{
 				KeyPath:  key.PrivateKeyPath,
 				Severity: Critical,
@@ -302,17 +327,7 @@ func newCheckSSHDirPermissions(dir string) SystemCheck {
 				Message:  "Can't check permissions on this directory",
 				Fix:      "Check that " + dir + " is accessible",
 			})
-		} else if runtime.GOOS == "windows" {
-			// POSIX permission bits aren't meaningful on Windows (ACL != mode),
-			// so report that this check is skipped rather than a false Critical.
-			results = append(results, AuditResult{
-				KeyPath:  dir,
-				Severity: Info,
-				Category: CategorySystem,
-				Message:  "Directory permissions not checked on Windows",
-				Fix:      "Verify " + dir + " is restricted to your user via NTFS ACLs",
-			})
-		} else if stat.Mode().Perm() != 0700 {
+		} else if posixPermsEnforceable() && stat.Mode().Perm() != 0700 {
 			results = append(results, AuditResult{
 				KeyPath:  dir,
 				Severity: Critical,
@@ -402,12 +417,7 @@ func newCheckConfigPermissions(sshDir string) SystemCheck {
 				Fix:      "Check that " + path + " is accessible",
 			}}
 		}
-		if runtime.GOOS == "windows" {
-			// POSIX mode bits aren't meaningful on Windows; the dir check already
-			// notes this once.
-			return nil
-		}
-		if stat.Mode().Perm()&0o077 != 0 {
+		if posixPermsEnforceable() && stat.Mode().Perm()&0o077 != 0 {
 			return []AuditResult{{
 				KeyPath:  path,
 				Severity: Warning,

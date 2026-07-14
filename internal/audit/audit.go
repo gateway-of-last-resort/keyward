@@ -65,6 +65,7 @@ func Run(allKeys []keys.Key, cfg *config.Config, sshDir string) AuditReport {
 	systemChecks := []SystemCheck{
 		newCheckSSHDirPermissions(sshDir),
 		newCheckConfigPermissions(sshDir),
+		checkPlatformPermissionModel,
 		checkSSHAgent,
 	}
 

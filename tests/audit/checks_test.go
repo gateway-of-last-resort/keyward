@@ -60,6 +60,26 @@ func TestCheckUserKnownHostsDevNull(t *testing.T) {
 	}
 }
 
+// TestPlatformPermissionModel checks the consolidated Windows behaviour: where
+// POSIX permission bits aren't enforceable the audit emits exactly one Info
+// describing the ACL model, and on POSIX platforms that Info is absent (the real
+// 0600/0700/0o077 checks run instead).
+func TestPlatformPermissionModel(t *testing.T) {
+	dir := t.TempDir()
+
+	sev, found := hasMessage(runConfigAudit(t, "Host x\n", dir), "NTFS ACLs")
+	if runtime.GOOS == "windows" {
+		if !found {
+			t.Fatal("expected the Windows permission-model Info")
+		}
+		if sev != audit.Info {
+			t.Errorf("severity = %s, want INFO", sev)
+		}
+	} else if found {
+		t.Error("permission-model Info must not appear on POSIX platforms")
+	}
+}
+
 func TestCheckConfigPermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits are not meaningful on Windows")
