@@ -179,6 +179,29 @@ commitment. From **1.0.0** onward:
 - **Backup retention.** Config backups are capped (last 5 kept) to limit how
   many copies of your SSH config linger on disk.
 
+## Platform notes (Windows)
+
+POSIX file modes do not mean on Windows what they mean on Unix, so Keyward treats
+a few things differently there. This is by design, not a gap.
+
+- **Permissions are ACL-governed.** Go synthesizes `os.FileMode` on Windows from
+  file attributes; it never matches `0600`/`0700`/`0o077`, and real access is
+  controlled by NTFS ACLs. Comparing mode bits would flag every file regardless
+  of its actual protection, so the audit **skips** the key (`0600`), `~/.ssh`
+  directory (`0700`), and config (`0o077`) permission checks on Windows and
+  instead emits a single **Info** finding: file access is governed by NTFS ACLs,
+  and you should confirm `~/.ssh` and your private keys are restricted to your
+  user account. On Unix these checks run normally and a wrong mode is flagged.
+- **Atomic writes stay atomic; the directory fsync is skipped.** Every write is
+  still `temp -> fsync -> rename`, and `rename` is atomic on Windows. The extra
+  *directory* fsync that makes the rename itself crash-durable is skipped, because
+  opening a directory and calling `Sync` returns "Access is denied" on Windows.
+  The file contents are still fsynced before the rename.
+- **Symlink pre-open guard is a no-op.** New-key creation opens with `O_NOFOLLOW`
+  on Unix to refuse a pre-planted symlink. Windows has no `O_NOFOLLOW`; the
+  `O_EXCL` exclusive-create guard still applies, and the symlink threat model
+  differs there.
+
 ## Verifying releases
 
 Release artifacts are checksummed in `checksums.txt`, which is signed with

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-14
+
+Settles the Windows story on the path to 1.0: one documented model for how
+permissions and durability behave where POSIX semantics do not apply.
+
+### Changed
+
+- **Windows permission audit** — the per-file POSIX permission checks (key
+  `0600`, `~/.ssh` `0700`, config `0o077`) are consolidated so that on Windows
+  they are skipped in favour of a single Info explaining that access is governed
+  by NTFS ACLs. The audit now gives a meaningful result there instead of a silent
+  skip; on Unix the checks are unchanged.
+- **Documented the Windows model** — SECURITY.md gains a Platform notes section
+  covering ACLs vs POSIX bits, the skipped directory fsync (writes stay atomic),
+  and the no-op `O_NOFOLLOW` symlink guard (`O_EXCL` still applies).
+
 ## [0.6.0] - 2026-07-14
 
 Establishes the on-disk format stability contract on the path to 1.0: the formats
@@ -217,7 +233,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.4.0...v0.5.0

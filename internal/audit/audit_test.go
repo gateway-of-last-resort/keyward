@@ -345,12 +345,10 @@ func TestCheckSSHDirPermissions_Platform(t *testing.T) {
 	results := newCheckSSHDirPermissions(dir)()
 
 	if runtime.GOOS == "windows" {
-		// Must not raise a false Critical; instead an Info that it's skipped.
-		if hasSeverity(results, Critical) {
-			t.Error("Windows: dir perm check must not raise Critical")
-		}
-		if !hasSeverity(results, Info) {
-			t.Error("Windows: expected an Info noting the check is skipped")
+		// POSIX bits aren't enforceable, so the dir check is silent (no Critical
+		// and no Info); the single model Info comes from checkPlatformPermissionModel.
+		if len(results) != 0 {
+			t.Errorf("Windows: dir perm check must be silent, got %v", results)
 		}
 		return
 	}
@@ -359,6 +357,25 @@ func TestCheckSSHDirPermissions_Platform(t *testing.T) {
 		t.Error("0755 ~/.ssh should produce Critical on POSIX")
 	}
 	allHaveFix(t, results)
+}
+
+// TestCheckPlatformPermissionModel verifies the consolidated permission-model
+// finding: exactly one Info on Windows (where POSIX bits aren't enforceable) and
+// nothing on POSIX platforms, where the real mode checks run instead.
+func TestCheckPlatformPermissionModel(t *testing.T) {
+	results := checkPlatformPermissionModel()
+
+	if runtime.GOOS == "windows" {
+		if !hasSeverity(results, Info) {
+			t.Error("Windows: expected the permission-model Info")
+		}
+		allHaveFix(t, results)
+		return
+	}
+
+	if len(results) != 0 {
+		t.Errorf("POSIX: model check must be silent, got %v", results)
+	}
 }
 
 // ── CheckAge ──────────────────────────────────────────────────────────────────
