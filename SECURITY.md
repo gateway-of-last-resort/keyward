@@ -99,6 +99,69 @@ header. v2 (current) binds the header bytes above as AEAD associated data. A v1
 file is read transparently and rewritten in place as v2 on the next successful
 unlock, so no manual migration is needed.
 
+### `metadata.age` file format
+
+Key metadata lives in `~/.keyward/metadata.age`: an age file (X25519 +
+ChaCha20-Poly1305, the standard `age-encryption.org/v1` binary format) wrapping a
+single JSON document. Decrypted, the plaintext is:
+
+```json
+{
+  "SchemaVersion": 1,
+  "Keys": {
+    "SHA256:<fingerprint>": {
+      "Fingerprint": "SHA256:<fingerprint>",
+      "Tags": ["work"],
+      "Note": "...",
+      "LastRotatedAt": "2026-01-02T15:04:05Z",
+      "LinkedHosts": ["github.com"]
+    }
+  },
+  "SavedAt": "2026-01-02T15:04:05Z"
+}
+```
+
+`SchemaVersion` identifies the metadata schema (see the migration policy below);
+files written before v0.6.0 omit the field and are read as version 0. The store
+is written atomically (temp → fsync → rename → `chmod 0600`), with the previous
+file moved aside as `metadata.age.bak` for rollback and crash recovery.
+
+### Backup `.tar.age` file format
+
+A backup is an age file wrapping an uncompressed **tar** archive, stored as
+`~/.keyward/backups/<timestamp>.tar.age` (timestamp `YYYY-MM-DD_HH-MM-SS`). The
+archive contains:
+
+- every regular file in `~/.ssh` **except** `known_hosts` and `authorized_keys`
+  (stored under their bare names, e.g. `id_ed25519`, `config`);
+- the metadata vault, stored under the reserved prefix `.keyward/metadata.age`.
+
+Each tar entry records the file's permission bits and modification time. On
+restore, an entry whose name begins with `.keyward/` is written back under the
+vault directory; everything else is written under `~/.ssh`. Restore is defensive:
+paths are contained to their target directory (a `..` traversal entry is skipped),
+restored modes are clamped to at most `0600`, and the whole archive and any single
+entry are size-capped (128 MiB / 64 MiB) so a crafted archive can't exhaust
+memory. The newest 5 backups are kept; older ones are pruned after each write.
+
+## Format stability and migration policy
+
+Keyward is pre-1.0 and the on-disk formats above are approaching a stability
+commitment. From **1.0.0** onward:
+
+- **Backward-compatible reads.** A release reads any `master.key`, `metadata.age`,
+  or backup written by an earlier release; existing vaults keep working across
+  upgrades with no manual steps.
+- **Versioned, migrating changes only.** A breaking change to a format is made by
+  bumping its version marker and migrating on read — never by silently changing
+  the layout. The `master.key` v1 → v2 upgrade is the model: a v1 file is read
+  transparently and rewritten as v2 on the next unlock. `metadata.age` carries a
+  `SchemaVersion` field for the same purpose; the backup tar is self-describing
+  through its entry names.
+- **Forward tolerance.** Unknown JSON fields in `metadata.age` are ignored rather
+  than rejected, so a store touched by a newer minor release still loads on an
+  older one within the 0.x line.
+
 ## Local file-handling guarantees
 
 - **Atomic writes.** All writes go to a temporary file, are `fsync`ed/renamed
