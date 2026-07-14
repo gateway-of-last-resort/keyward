@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-14
+
+Establishes the on-disk format stability contract on the path to 1.0: the formats
+are documented and a metadata schema version is now recorded so future changes can
+migrate cleanly.
+
+### Added
+
+- **Metadata schema version** — `metadata.age` now records a `SchemaVersion`
+  field. Stores written by earlier versions are read unchanged (as version 0), so
+  the field is a forward-looking hook for backward-compatible migrations.
+
+### Changed
+
+- **Documented on-disk formats** — SECURITY.md now specifies the `master.key`,
+  `metadata.age`, and backup `.tar.age` layouts and states the format-stability
+  and migration policy (backward-compatible reads, versioned migrating changes)
+  that takes effect from 1.0.
+
 ## [0.5.1] - 2026-07-06
 
 Completes the selection-style redesign started in 0.5.0 so every screen shares
@@ -198,7 +217,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.3.0...v0.4.0
