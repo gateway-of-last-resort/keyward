@@ -95,11 +95,12 @@ func readStore(path string, identity age.Identity) (Store, error) {
 // Save encrypts and atomically writes the store to dir/metadata.age.
 func Save(s *Store, dir string, identity age.Identity) error {
 
-	// Marshal a copy stamped with SavedAt; commit the timestamp to the caller's
-	// store only after the write succeeds, so a failed Save never leaves the
-	// in-memory store claiming a save time that never reached disk.
+	// Marshal a copy stamped with SavedAt and the current schema version; commit
+	// both to the caller's store only after the write succeeds, so a failed Save
+	// never leaves the in-memory store claiming state that never reached disk.
 	saved := *s
 	saved.SavedAt = time.Now()
+	saved.SchemaVersion = CurrentSchemaVersion
 	plaintext, err := json.Marshal(&saved)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrCorrupted, err)
@@ -137,6 +138,7 @@ func Save(s *Store, dir string, identity age.Identity) error {
 	// directory), so it is now safe to drop the backup and commit SavedAt.
 	_ = os.Remove(bakPath)
 	s.SavedAt = saved.SavedAt
+	s.SchemaVersion = saved.SchemaVersion
 	return nil
 }
 
