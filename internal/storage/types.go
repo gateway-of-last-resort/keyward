@@ -16,9 +16,19 @@ type KeyMetadata struct {
 
 // Store is the in-memory representation of the encrypted metadata store.
 type Store struct {
-	Keys    map[string]KeyMetadata
-	SavedAt time.Time
+	// SchemaVersion identifies the on-disk metadata schema. Save stamps it with
+	// CurrentSchemaVersion; stores written before versioning (v0.5.x and earlier)
+	// have no such field and decode as 0, which is treated as the original schema.
+	// It exists so a future breaking change can be detected and migrated on Load.
+	SchemaVersion int
+	Keys          map[string]KeyMetadata
+	SavedAt       time.Time
 }
+
+// CurrentSchemaVersion is the metadata schema version written by this build.
+// Bump it only alongside a documented, backward-compatible migration (see the
+// on-disk formats section of SECURITY.md).
+const CurrentSchemaVersion = 1
 
 const (
 	defaultDir   = ".keyward"

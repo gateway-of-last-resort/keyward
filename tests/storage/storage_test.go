@@ -11,6 +11,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/gateway-of-last-resort/keyward/internal/storage"
+	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
 // newIdentity generates a fresh X25519 identity for test use.
@@ -131,6 +132,68 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 		if got.Note != want.Note {
 			t.Errorf("Note = %q, want %q", got.Note, want.Note)
 		}
+	}
+}
+
+// TestSaveLoad_StampsSchemaVersion checks that Save stamps CurrentSchemaVersion
+// onto both the on-disk store and the caller's in-memory Store, and that Load
+// reads it back.
+func TestSaveLoad_StampsSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	id := newIdentity(t)
+
+	s := &storage.Store{Keys: make(map[string]storage.KeyMetadata)}
+	if err := storage.Put(s, testMeta("SHA256:aaaa")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := storage.Save(s, dir, id); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if s.SchemaVersion != storage.CurrentSchemaVersion {
+		t.Errorf("caller SchemaVersion = %d, want %d", s.SchemaVersion, storage.CurrentSchemaVersion)
+	}
+
+	loaded, err := storage.Load(dir, id)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.SchemaVersion != storage.CurrentSchemaVersion {
+		t.Errorf("loaded SchemaVersion = %d, want %d", loaded.SchemaVersion, storage.CurrentSchemaVersion)
+	}
+}
+
+// TestLoad_LegacyFileHasZeroSchemaVersion emulates a metadata file written before
+// versioning existed (v0.5.x): its JSON has no SchemaVersion field. Load must read
+// it successfully and report SchemaVersion 0 — the backward-read guarantee that the
+// format-stability policy commits to.
+func TestLoad_LegacyFileHasZeroSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	id := newIdentity(t)
+
+	// Encrypt a legacy-shaped store: no SchemaVersion key at all.
+	legacyJSON := []byte(`{"Keys":{"SHA256:aaaa":{"Fingerprint":"SHA256:aaaa","Tags":["test"],"Note":"legacy","LastRotatedAt":"0001-01-01T00:00:00Z","LinkedHosts":["host1"]}},"SavedAt":"0001-01-01T00:00:00Z"}`)
+	ciphertext, err := crypto.Encrypt(legacyJSON, id.Recipient())
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "metadata.age"), ciphertext, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := storage.Load(dir, id)
+	if err != nil {
+		t.Fatalf("Load legacy file: %v", err)
+	}
+	if loaded.SchemaVersion != 0 {
+		t.Errorf("legacy SchemaVersion = %d, want 0", loaded.SchemaVersion)
+	}
+	got, err := storage.Get(loaded, "SHA256:aaaa")
+	if err != nil {
+		t.Fatalf("Get after legacy Load: %v", err)
+	}
+	if got.Note != "legacy" {
+		t.Errorf("Note = %q, want %q", got.Note, "legacy")
 	}
 }
 
