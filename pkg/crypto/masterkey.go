@@ -38,6 +38,15 @@ const (
 	argon2idThreads byte   = 4
 	argon2idKeyLen  uint32 = 32
 
+	// Upper bounds on the argon2 parameters read from an untrusted file header.
+	// Keyward always writes the fixed values above; a file requesting far more is
+	// corrupt or hostile. Passing an unbounded memory value straight to argon2
+	// would let a crafted or bit-flipped master.key allocate gigabytes and hang
+	// or OOM the process on unlock. Generous headroom is left for a future bump.
+	maxArgon2Time    uint32 = 64
+	maxArgon2Memory  uint32 = 1 << 20 // KiB (1 GiB)
+	maxArgon2Threads byte   = 64
+
 	saltSize  = 32
 	nonceSize = 12
 
@@ -226,6 +235,12 @@ func LoadMasterKey(path, password string) (age.Identity, error) {
 	encrypted := data[pos:]
 
 	if time == 0 || memory == 0 || threads == 0 {
+		return nil, ErrCorruptedMasterKey
+	}
+	// Reject implausible KDF parameters before argon2 tries to honour them: an
+	// unbounded memory value from a crafted or corrupt file would otherwise hang
+	// or exhaust memory on unlock (found by FuzzLoadMasterKey).
+	if time > maxArgon2Time || memory > maxArgon2Memory || threads > maxArgon2Threads {
 		return nil, ErrCorruptedMasterKey
 	}
 
