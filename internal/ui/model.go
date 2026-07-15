@@ -87,7 +87,7 @@ func New(k []keys.Key, cfg *config.Config, report audit.AuditReport, sshDir, vau
 	var setupView setupModel
 	var unlockView unlockModel
 
-	if _, err := os.Stat(masterKeyPath); os.IsNotExist(err) {
+	if !crypto.MasterKeyExists(masterKeyPath) {
 		initialScreen = ScreenSetup
 		setupView = newSetupModel(vaultDir, masterKeyPath)
 	} else {

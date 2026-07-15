@@ -252,6 +252,49 @@ func TestLoadMasterKey_RejectsOversizedKDFParams(t *testing.T) {
 	}
 }
 
+// TestLoadMasterKey_RecoversFromBak simulates a crash during a password change:
+// the primary master.key is renamed aside before the replacement is written, so
+// only the .bak survives. LoadMasterKey must recover it (and MasterKeyExists must
+// report the vault as present) rather than let the app create a new, orphaning
+// identity.
+func TestLoadMasterKey_RecoversFromBak(t *testing.T) {
+	path := initKey(t, "correct horse")
+	if err := os.Rename(path, path+".bak"); err != nil {
+		t.Fatal(err)
+	}
+
+	if !crypto.MasterKeyExists(path) {
+		t.Error("MasterKeyExists should count a leftover .bak as present")
+	}
+
+	id, err := crypto.LoadMasterKey(path, "correct horse")
+	if err != nil {
+		t.Fatalf("LoadMasterKey should recover from .bak: %v", err)
+	}
+	if id == nil {
+		t.Fatal("nil identity after recovery")
+	}
+	// The .bak was promoted back to the primary path.
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("primary not restored from .bak: %v", err)
+	}
+	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
+		t.Error(".bak should be gone after promotion")
+	}
+}
+
+// TestMasterKeyExists_AbsentVault confirms a truly empty vault dir reports absent
+// and LoadMasterKey returns ErrMasterKeyNotFound (so the app offers first-run setup).
+func TestMasterKeyExists_AbsentVault(t *testing.T) {
+	path := keyPath(t)
+	if crypto.MasterKeyExists(path) {
+		t.Error("MasterKeyExists should be false with no key and no .bak")
+	}
+	if _, err := crypto.LoadMasterKey(path, "x"); !errors.Is(err, crypto.ErrMasterKeyNotFound) {
+		t.Fatalf("err = %v, want ErrMasterKeyNotFound", err)
+	}
+}
+
 func TestInitMasterKey_WritesV2(t *testing.T) {
 	path := initKey(t, "pw")
 	if v := versionByte(t, path); v != 0x02 {
