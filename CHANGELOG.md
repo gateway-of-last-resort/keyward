@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-15
+
+First stable release. The on-disk formats (`master.key`, `metadata.age`, and
+`.tar.age` backups) and the command-line interface are now covered by semantic
+versioning: existing vaults keep working across all `1.x` releases, and a breaking
+change to a format or flag would require a `2.0`.
+
+No functional changes over 0.9.0. This milestone declares the stability contract
+reached across the 0.5.1–0.9.0 line: a unified TUI, documented and versioned
+on-disk formats, a documented Windows permission model, end-to-end and fuzz test
+coverage, and a pre-1.0 correctness review.
+
 ## [0.9.0] - 2026-07-15
 
 A correctness and robustness pass from a pre-1.0 review: config-parser edge cases,
@@ -288,7 +300,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.6.0...v0.7.0
