@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-15
+
+A correctness and robustness pass from a pre-1.0 review: config-parser edge cases,
+TUI state bugs, and several vault-safety fixes.
+
+### Fixed
+
+- **Config parser** accepts the `Keyword = value` form (optional whitespace around
+  `=`) and `Host=pattern`, and preserves mixed and CRLF line endings byte-for-byte
+  on round-trip. Renaming a Match block rewrites its line instead of silently
+  diverging from the file, and about 30 more ssh_config keywords are recognised.
+- **Backup restore** reloads the in-memory metadata store, so restored tags and
+  notes appear immediately and are no longer overwritten by the next save.
+- **Key rotation** writes the new public key to the standard path for a
+  private-only key (no orphaned temp file), and a weak RSA key can now be rotated
+  (its size is clamped up to 4096).
+- **Detail screen** shows audit findings for public-only keys, and deleting one
+  targets the right key without touching a stray file in the working directory.
+- The audit re-runs after a config save, and the Settings footer shows the actual
+  build version instead of a hardcoded string.
+
+### Security
+
+- **Master-key recovery.** A crash during a password change could leave only a
+  `master.key.bak`; the vault is now recovered from it instead of appearing absent
+  and prompting a new identity that would orphan existing metadata and backups.
+- The key-rotation `.bak` copy refuses a pre-planted symlink (`O_NOFOLLOW`), and
+  the `UserKnownHostsFile /dev/null` audit check is no longer bypassed by extra
+  paths or quotes.
+
+### Changed
+
+- The metadata store is snapshotted before the background save, preventing a rare
+  concurrent-map crash on fast successive metadata edits.
+
 ## [0.8.0] - 2026-07-15
 
 Test-hardening pass before the 1.0 stability sweep: end-to-end, fuzzing, and
@@ -253,7 +288,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.1...v0.6.0
