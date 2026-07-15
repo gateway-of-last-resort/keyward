@@ -42,7 +42,9 @@ func newKeyListModel(ks []keys.Key, results []audit.AuditResult, sshDir string) 
 	}
 	items := make([]keyListItem, len(ks))
 	for i, k := range ks {
-		items[i] = keyListItem{key: k, severity: worst[k.PrivateKeyPath]}
+		// Match on the key's identity (public path for a public-only key), since the
+		// audit records findings under the public path when there is no private key.
+		items[i] = keyListItem{key: k, severity: worst[keyID(k)]}
 	}
 	return keyListModel{items: items, sshDir: sshDir}
 }

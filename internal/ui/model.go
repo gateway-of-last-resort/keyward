@@ -77,14 +77,14 @@ type Model struct {
 	errToken int
 }
 
-// New creates a ready-to-run Model.
-// It checks for an existing master key in vaultDir and starts with ScreenSetup
-// (first run) or ScreenUnlock (vault already initialised).
 // Version is shown in the Settings footer. main sets it to the ldflags-injected
 // build version so the footer matches `keyward --version` (and the release tag)
 // instead of drifting from a hardcoded string. Defaults to "dev" for local builds.
 var Version = "dev"
 
+// New creates a ready-to-run Model.
+// It checks for an existing master key in vaultDir and starts with ScreenSetup
+// (first run) or ScreenUnlock (vault already initialised).
 func New(k []keys.Key, cfg *config.Config, report audit.AuditReport, sshDir, vaultDir string) Model {
 	masterKeyPath := filepath.Join(vaultDir, "master.key")
 

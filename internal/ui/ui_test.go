@@ -243,6 +243,22 @@ func TestRotateBitSize_ClampsWeakRSA(t *testing.T) {
 	}
 }
 
+// TestKeyList_PublicOnlySeverity ensures the key-list badge reflects a public-only
+// key's audit findings (recorded under its public path), instead of showing "OK".
+func TestKeyList_PublicOnlySeverity(t *testing.T) {
+	pub := "/ssh/legacy.pub"
+	k := keys.Key{PublicKeyPath: pub, IsPublicOnly: true, Algorithm: "ssh-dss"}
+	results := []audit.AuditResult{{KeyPath: pub, Severity: audit.Critical, Category: audit.CategoryKey, Message: "weak"}}
+
+	m := newKeyListModel([]keys.Key{k}, results, "/ssh")
+	if len(m.items) != 1 {
+		t.Fatalf("want 1 item, got %d", len(m.items))
+	}
+	if m.items[0].severity != audit.Critical {
+		t.Errorf("public-only key severity = %q, want CRITICAL", m.items[0].severity)
+	}
+}
+
 // TestDeleteKey_PublicOnly deletes a public-only key (empty private path): the
 // public file is removed, and the emitted keyDeletedMsg carries the public path
 // as identity rather than an empty string.
