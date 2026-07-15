@@ -22,6 +22,8 @@ import (
 	"github.com/gateway-of-last-resort/keyward/internal/config"
 	"github.com/gateway-of-last-resort/keyward/internal/keys"
 	"github.com/gateway-of-last-resort/keyward/internal/knownhosts"
+	"github.com/gateway-of-last-resort/keyward/internal/storage"
+	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
 // k builds a tea.KeyMsg whose String() matches what the update funcs switch on.
@@ -174,6 +176,48 @@ func TestFullProgram_DrillIntoDetailAndBack(t *testing.T) {
 	m, _ = sendRoot(t, m, "esc")
 	if m.active != ScreenKeys {
 		t.Fatalf("esc from Detail should return to Keys, active = %v", m.active)
+	}
+}
+
+// TestRestore_ReloadsStore guards against silent metadata loss: after a restore
+// overwrites metadata.age, the in-memory store must be reloaded from it, otherwise
+// the restored entries are invisible and the next Save clobbers the restored file.
+func TestRestore_ReloadsStore(t *testing.T) {
+	dir := t.TempDir()
+	vaultDir := filepath.Join(dir, ".keyward")
+	if err := storage.Init(vaultDir); err != nil {
+		t.Fatal(err)
+	}
+	id, err := crypto.InitMasterKey(filepath.Join(vaultDir, "master.key"), "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The on-disk metadata.age (as if just restored) carries an entry.
+	restored := storage.Store{Keys: map[string]storage.KeyMetadata{}}
+	if err := storage.Put(&restored, storage.KeyMetadata{Fingerprint: "SHA256:x", Note: "restored"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Save(&restored, vaultDir, id); err != nil {
+		t.Fatal(err)
+	}
+
+	// The model still holds the stale, empty store it loaded at unlock.
+	stale := storage.Store{Keys: map[string]storage.KeyMetadata{}}
+	m := Model{
+		active:     ScreenBackup,
+		identity:   id,
+		vaultDir:   vaultDir,
+		sshDir:     dir,
+		store:      &stale,
+		backupView: newBackupModel(dir, vaultDir, id),
+	}
+
+	next, _ := m.Update(backupResultMsg{restored: true})
+	m = next.(Model)
+
+	if _, err := storage.Get(*m.store, "SHA256:x"); err != nil {
+		t.Fatalf("store not reloaded after restore: %v", err)
 	}
 }
 

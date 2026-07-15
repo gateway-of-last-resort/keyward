@@ -509,6 +509,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case backupResultMsg:
 		m.backupView, _ = m.backupView.update(msg)
 		if msg.err == nil && msg.restored {
+			// Restore overwrote metadata.age on disk. Reload the in-memory store
+			// from it, otherwise the restored tags/notes stay invisible until a
+			// restart and the next metadata Save clobbers the just-restored file
+			// with the stale store.
+			if m.identity != nil {
+				if s, err := storage.Load(m.vaultDir, m.identity); err == nil {
+					m.store = &s
+				}
+			}
 			return m, m.reloadKeys()
 		}
 		return m, nil
