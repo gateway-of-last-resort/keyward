@@ -403,13 +403,30 @@ func copyPubKey(path string) error {
 	return clipboard.WriteAll(strings.TrimSpace(string(data)))
 }
 
+// rotateRSAMinBits is the RSA modulus size a rotation clamps up to. A key the
+// audit flags as too small (e.g. 1024-bit) carried its weak BitSize straight into
+// GenerateKeys, which then rejected it, so the very "rotate" fix the audit
+// suggested could not run.
+const rotateRSAMinBits = 4096
+
+// rotateBitSize picks the RSA size for a rotation: it clamps a weak size up to
+// rotateRSAMinBits so a flagged key rotates into a strong one, while preserving an
+// already-strong size. Non-RSA algorithms ignore bit size, so the value passes
+// through untouched.
+func rotateBitSize(algorithm string, oldBits int) int {
+	if keys.Algorithm(algorithm) == keys.AlgorithmRSA && oldBits < rotateRSAMinBits {
+		return rotateRSAMinBits
+	}
+	return oldBits
+}
+
 func rotateKeyCmd(k keys.Key, oldTags []string, oldNote, comment, passphrase string) tea.Cmd {
 	return func() tea.Msg {
 		opts := keys.GenerateOptions{
 			Algorithm:            keys.Algorithm(k.Algorithm),
 			Filename:             filepath.Base(k.PrivateKeyPath),
 			Overwrite:            true,
-			BitSize:              k.BitSize,
+			BitSize:              rotateBitSize(k.Algorithm, k.BitSize),
 			Comment:              comment,
 			Passphrase:           []byte(passphrase),
 			AllowEmptyPassphrase: passphrase == "",

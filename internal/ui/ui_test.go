@@ -221,6 +221,28 @@ func TestRestore_ReloadsStore(t *testing.T) {
 	}
 }
 
+// TestRotateBitSize_ClampsWeakRSA covers the fix that lets an audit-flagged weak
+// RSA key actually rotate: the size is clamped up to 4096 for RSA (preserving an
+// already-strong size), and ignored for other algorithms.
+func TestRotateBitSize_ClampsWeakRSA(t *testing.T) {
+	cases := []struct {
+		algo string
+		in   int
+		want int
+	}{
+		{"ssh-rsa", 1024, 4096},
+		{"ssh-rsa", 2048, 4096},
+		{"ssh-rsa", 4096, 4096},
+		{"ssh-rsa", 8192, 8192},
+		{"ssh-ed25519", 256, 256},
+	}
+	for _, c := range cases {
+		if got := rotateBitSize(c.algo, c.in); got != c.want {
+			t.Errorf("rotateBitSize(%q, %d) = %d, want %d", c.algo, c.in, got, c.want)
+		}
+	}
+}
+
 func TestNav_QQuitsFromKeys(t *testing.T) {
 	m := Model{active: ScreenKeys}
 	_, cmd := m.Update(k("q"))
