@@ -29,6 +29,7 @@ func main() {
 
 	report := audit.Run(env.Keys, env.Cfg, env.SSHDir)
 
+	ui.Version = version // show the build version in the Settings footer
 	m := ui.New(env.Keys, env.Cfg, report, env.SSHDir, env.VaultDir)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

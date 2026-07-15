@@ -26,6 +26,17 @@ var validSSHKeywords = map[string]struct{}{
 	"cipher": {}, "ciphers": {}, "macs": {}, "hostkeyalgorithms": {},
 	"kexalgorithms": {}, "pubkeyacceptedalgorithms": {},
 	"hostbasedacceptedalgorithms": {},
+	"identitiesonly":              {}, "certificatefile": {}, "include": {},
+	"hostkeyalias": {}, "kbdinteractiveauthentication": {},
+	"verifyhostkeydns": {}, "updatehostkeys": {}, "gatewayports": {},
+	"remotecommand": {}, "pkcs11provider": {}, "securitykeyprovider": {},
+	"numberofpasswordprompts": {},
+	"canonicaldomains":        {}, "canonicalizemaxdots": {},
+	"canonicalizefallbacklocal": {}, "canonicalizepermittedcnames": {},
+	"fingerprinthash": {}, "streamlocalbindmask": {}, "streamlocalbindunlink": {},
+	"proxyusefdpass": {}, "clearallforwardings": {}, "escapechar": {},
+	"forwardx11timeout": {}, "ignoreunknown": {}, "revokedhostkeys": {},
+	"syslogfacility": {}, "tunneldevice": {}, "casignaturealgorithms": {},
 }
 
 func isValidSSHKeyword(key string) bool {

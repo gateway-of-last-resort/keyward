@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gateway-of-last-resort/keyward/internal/config"
@@ -70,6 +71,48 @@ func TestParseBytes_HostEqualsPattern(t *testing.T) {
 	}
 	if c.Blocks[0].Pattern != "example" {
 		t.Errorf("Pattern = %q, want example", c.Blocks[0].Pattern)
+	}
+}
+
+// TestParseBytes_MixedLineEndings checks that a file mixing CRLF and LF lines
+// round-trips byte-for-byte, rather than being force-converted to one style.
+func TestParseBytes_MixedLineEndings(t *testing.T) {
+	for _, raw := range []string{
+		"Host a\r\n    User x\nHost b\n", // mixed
+		"Host a\r\n    User root\r\n",    // all CRLF
+		"Host a\n    User root\n",        // all LF
+	} {
+		c := cfgBytes(t, raw)
+		if got := config.Serialize(&c); !bytes.Equal(got, []byte(raw)) {
+			t.Errorf("round-trip changed line endings:\n in: %q\nout: %q", raw, got)
+		}
+	}
+}
+
+// TestRenameHost_MatchBlock guards against silent divergence: renaming a Match
+// block must rewrite the on-disk Match line, not only b.Pattern in memory.
+func TestRenameHost_MatchBlock(t *testing.T) {
+	c := cfgBytes(t, "Match host *.corp\n    User root\n")
+	config.RenameHost(&c.Blocks[0], "host *.example")
+	out := string(config.Serialize(&c))
+	if c.Blocks[0].Pattern != "host *.example" {
+		t.Fatalf("Pattern = %q, want %q", c.Blocks[0].Pattern, "host *.example")
+	}
+	if !strings.Contains(out, "Match host *.example") {
+		t.Errorf("serialized config did not follow the rename:\n%s", out)
+	}
+	if strings.Contains(out, "*.corp") {
+		t.Errorf("old Match pattern still present after rename:\n%s", out)
+	}
+}
+
+// TestKeywords_ExtendedRecognised confirms the parser recognises common keywords
+// that were missing, so they can be added and their commented form toggled.
+func TestKeywords_ExtendedRecognised(t *testing.T) {
+	for _, kw := range []string{"IdentitiesOnly", "CertificateFile", "Include", "GatewayPorts", "PKCS11Provider"} {
+		if !config.IsValidSSHKeyword(kw) {
+			t.Errorf("keyword %q should be recognised", kw)
+		}
 	}
 }
 

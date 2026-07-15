@@ -62,8 +62,11 @@ func tokenize(data []byte) []Token {
 
 	for i, line := range lines {
 		tokens[i].LineNum = i + 1
+		// Keep any trailing '\r' in Raw so a CRLF (or mixed-ending) file
+		// round-trips byte-for-byte: Serialize joins tokens with '\n' and each
+		// Raw carries its own '\r' where the original had one. Parsing below works
+		// off the TrimSpace'd form, so the '\r' never leaks into Key/Value.
 		raw := string(line)
-		raw = strings.TrimRight(raw, "\r")
 		tokens[i].Raw = raw
 
 		trimmed := strings.TrimSpace(raw)

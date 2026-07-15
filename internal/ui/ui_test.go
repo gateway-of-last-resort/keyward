@@ -243,6 +243,84 @@ func TestRotateBitSize_ClampsWeakRSA(t *testing.T) {
 	}
 }
 
+// TestDeleteKey_PublicOnly deletes a public-only key (empty private path): the
+// public file is removed, and the emitted keyDeletedMsg carries the public path
+// as identity rather than an empty string.
+func TestDeleteKey_PublicOnly(t *testing.T) {
+	dir := t.TempDir()
+	pub := filepath.Join(dir, "orphan.pub")
+	if err := os.WriteFile(pub, []byte("ssh-ed25519 AAAA orphan\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	k := keys.Key{PublicKeyPath: pub, IsPublicOnly: true}
+
+	del, ok := runCmd(deleteKeyCmd(k)).(keyDeletedMsg)
+	if !ok {
+		t.Fatalf("want keyDeletedMsg")
+	}
+	if del.path != pub {
+		t.Errorf("keyDeletedMsg.path = %q, want %q", del.path, pub)
+	}
+	if _, err := os.Stat(pub); !os.IsNotExist(err) {
+		t.Error("public key file not removed")
+	}
+}
+
+// TestKeyDeleted_RemovesCorrectPublicOnly ensures deletion targets the identified
+// key, not the first public-only entry (which all shared an empty private path).
+func TestKeyDeleted_RemovesCorrectPublicOnly(t *testing.T) {
+	a := keys.Key{PublicKeyPath: "/ssh/a.pub", IsPublicOnly: true}
+	b := keys.Key{PublicKeyPath: "/ssh/b.pub", IsPublicOnly: true}
+	m := Model{active: ScreenKeys, keys: []keys.Key{a, b}, sshDir: "/ssh"}
+	m.keyList = newKeyListModel(m.keys, nil, "/ssh")
+
+	next, _ := m.Update(keyDeletedMsg{path: keyID(b)})
+	m = next.(Model)
+
+	if len(m.keys) != 1 || keyID(m.keys[0]) != keyID(a) {
+		t.Fatalf("wrong key removed; remaining = %+v", m.keys)
+	}
+}
+
+// TestSaveStore_SnapshotsBeforeSave proves the background save marshals a snapshot:
+// mutating the live store after saveStore() is called must not change what lands
+// on disk, so a concurrent metadata edit cannot race the Save's map read.
+func TestSaveStore_SnapshotsBeforeSave(t *testing.T) {
+	dir := t.TempDir()
+	vaultDir := filepath.Join(dir, ".keyward")
+	if err := storage.Init(vaultDir); err != nil {
+		t.Fatal(err)
+	}
+	id, err := crypto.InitMasterKey(filepath.Join(vaultDir, "master.key"), "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st := storage.Store{Keys: map[string]storage.KeyMetadata{}}
+	if err := storage.Put(&st, storage.KeyMetadata{Fingerprint: "SHA256:x", Note: "snapshot"}); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{store: &st, identity: id, vaultDir: vaultDir}
+
+	cmd := m.saveStore()
+	// Mutate the live store after the snapshot is taken but before the save runs.
+	delete(st.Keys, "SHA256:x")
+	st.Keys["SHA256:y"] = storage.KeyMetadata{Fingerprint: "SHA256:y"}
+
+	runCmd(cmd)
+
+	loaded, err := storage.Load(vaultDir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.Get(loaded, "SHA256:x"); err != nil {
+		t.Error("snapshot should have saved the pre-mutation entry SHA256:x")
+	}
+	if _, err := storage.Get(loaded, "SHA256:y"); err == nil {
+		t.Error("post-snapshot mutation SHA256:y must not appear in the saved store")
+	}
+}
+
 func TestNav_QQuitsFromKeys(t *testing.T) {
 	m := Model{active: ScreenKeys}
 	_, cmd := m.Update(k("q"))

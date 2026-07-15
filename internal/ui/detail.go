@@ -445,19 +445,36 @@ func rotateKeyCmd(k keys.Key, oldTags []string, oldNote, comment, passphrase str
 	}
 }
 
+// keyID is a key's stable identity for list lookups: its private-key path, or its
+// public-key path when it is a public-only key (empty private path). Using it
+// avoids matching every public-only key by the same empty string.
+func keyID(k keys.Key) string {
+	if k.PrivateKeyPath != "" {
+		return k.PrivateKeyPath
+	}
+	return k.PublicKeyPath
+}
+
 func deleteKeyCmd(k keys.Key) tea.Cmd {
 	return func() tea.Msg {
-		if err := os.Remove(k.PrivateKeyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return errMsg{err}
+		// Remove only the files that actually exist for this key. Guard every path
+		// against being empty so a public-only key never turns "" + ".bak" into a
+		// stray ".bak" removed from the process working directory.
+		if k.PrivateKeyPath != "" {
+			if err := os.Remove(k.PrivateKeyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return errMsg{err}
+			}
+			_ = os.Remove(k.PrivateKeyPath + ".bak")
 		}
 		pubPath := k.PublicKeyPath
-		if pubPath == "" {
+		if pubPath == "" && k.PrivateKeyPath != "" {
 			pubPath = k.PrivateKeyPath + ".pub"
 		}
-		_ = os.Remove(pubPath)
-		_ = os.Remove(k.PrivateKeyPath + ".bak")
-		_ = os.Remove(pubPath + ".bak")
-		return keyDeletedMsg{path: k.PrivateKeyPath}
+		if pubPath != "" {
+			_ = os.Remove(pubPath)
+			_ = os.Remove(pubPath + ".bak")
+		}
+		return keyDeletedMsg{path: keyID(k)}
 	}
 }
 
