@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/gateway-of-last-resort/keyward/internal/audit"
 	"github.com/gateway-of-last-resort/keyward/internal/config"
 	"github.com/gateway-of-last-resort/keyward/internal/keys"
 	"github.com/gateway-of-last-resort/keyward/internal/knownhosts"
@@ -108,6 +109,71 @@ func TestNav_ShiftTabCyclesBackward(t *testing.T) {
 	m, _ = sendRoot(t, m, "shift+tab")
 	if m.active != ScreenSettings {
 		t.Fatalf("shift+tab from Keys: active = %v, want Settings", m.active)
+	}
+}
+
+// fullModel builds a realistically-constructed root Model via New (the same
+// constructor cmd/keyward uses), sized and landed on the Keys screen, so a test
+// can drive the whole program instead of an isolated sub-model.
+func fullModel(t *testing.T) Model {
+	t.Helper()
+	dir := t.TempDir()
+	sshDir := filepath.Join(dir, ".ssh")
+	vaultDir := filepath.Join(dir, ".keyward")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfgBytes := []byte("Host x\n    HostName example.com\n    User git\n")
+	if err := os.WriteFile(filepath.Join(sshDir, "config"), cfgBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.ParseBytes("config", cfgBytes)
+	report := audit.Run(keyFixture(), &cfg, sshDir)
+
+	m := New(keyFixture(), &cfg, report, sshDir, vaultDir)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = next.(Model)
+	m.active = ScreenKeys // simulate an unlocked vault landing on the key list
+	return m
+}
+
+// TestFullProgram_RendersEveryScreen tabs through the whole program end to end and
+// asserts each screen both becomes active in the expected order and renders a
+// non-empty view without panicking — the full-program complement to the isolated
+// sub-model tests. Colour is not asserted (lipgloss strips it under `go test`).
+func TestFullProgram_RendersEveryScreen(t *testing.T) {
+	m := fullModel(t)
+
+	for i, want := range tabScreens {
+		if i > 0 {
+			m, _ = sendRoot(t, m, "tab")
+		}
+		if m.active != want {
+			t.Fatalf("after %d tabs: active = %v, want %v", i, m.active, want)
+		}
+		if strings.TrimSpace(m.View()) == "" {
+			t.Errorf("screen %v rendered an empty view", want)
+		}
+	}
+}
+
+// TestFullProgram_DrillIntoDetailAndBack drives the Keys -> Detail -> Keys action
+// path through the root model, verifying the sub-screen navigation and that the
+// detail view renders.
+func TestFullProgram_DrillIntoDetailAndBack(t *testing.T) {
+	m := fullModel(t)
+
+	m, _ = sendRoot(t, m, "enter")
+	if m.active != ScreenDetail {
+		t.Fatalf("enter on a key should open Detail, active = %v", m.active)
+	}
+	if strings.TrimSpace(m.View()) == "" {
+		t.Error("detail screen rendered an empty view")
+	}
+
+	m, _ = sendRoot(t, m, "esc")
+	if m.active != ScreenKeys {
+		t.Fatalf("esc from Detail should return to Keys, active = %v", m.active)
 	}
 }
 

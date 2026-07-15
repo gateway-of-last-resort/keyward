@@ -235,6 +235,23 @@ func TestLoadMasterKey_Corrupt(t *testing.T) {
 	}
 }
 
+// TestLoadMasterKey_RejectsOversizedKDFParams guards the fix for a DoS found by
+// FuzzLoadMasterKey: the argon2 memory parameter read from the file is bounded,
+// so a crafted or corrupt header cannot make argon2 allocate gigabytes and hang
+// on unlock. The memory field is the uint32 at offset 9 (after magic+version+time).
+func TestLoadMasterKey_RejectsOversizedKDFParams(t *testing.T) {
+	path := initKey(t, "correct horse")
+	corrupt(t, path, func(b []byte) []byte {
+		binary.BigEndian.PutUint32(b[9:13], 0xFFFFFFFF) // argon2 memory (KiB)
+		return b
+	})
+
+	_, err := crypto.LoadMasterKey(path, "correct horse")
+	if !errors.Is(err, crypto.ErrCorruptedMasterKey) {
+		t.Fatalf("err = %v, want ErrCorruptedMasterKey", err)
+	}
+}
+
 func TestInitMasterKey_WritesV2(t *testing.T) {
 	path := initKey(t, "pw")
 	if v := versionByte(t, path); v != 0x02 {

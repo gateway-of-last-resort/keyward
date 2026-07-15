@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-15
+
+Test-hardening pass before the 1.0 stability sweep: end-to-end, fuzzing, and
+full-program TUI coverage. Fuzzing surfaced and fixed a denial-of-service in the
+master-key loader.
+
+### Security
+
+- **Bounded the argon2 parameters read from `master.key`.** A crafted or corrupt
+  key file could request a huge KDF memory size and make the loader allocate
+  gigabytes and hang on unlock. The parameters are now range-checked and an
+  out-of-range header is rejected as corrupt. Found by the new fuzzer.
+
+### Added
+
+- End-to-end lifecycle test (init, generate, audit, backup, restore, verify),
+  fuzz targets for the config parser and the `master.key` loader, and a
+  full-program TUI navigation and render test. Tests only; no new runtime or test
+  dependencies.
+
 ## [0.7.0] - 2026-07-14
 
 Settles the Windows story on the path to 1.0: one documented model for how
@@ -233,7 +253,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/gateway-of-last-resort/keyward/compare/v0.5.0...v0.5.1
