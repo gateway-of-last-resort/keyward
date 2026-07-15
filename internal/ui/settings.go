@@ -396,9 +396,8 @@ func (m settingsModel) viewMenu() string {
 	sb.WriteString(dimStyle.Render("  vault dir" + settingsValuePad("vault dir") + fitLeft(m.vaultDir, m.valueWidth())))
 	sb.WriteString("\n\n\n\n\n")
 
-	const version = "v0.8.0"
 	const repo = "github.com/gateway-of-last-resort"
-	footer := version + "  ·  " + repo
+	footer := Version + "  ·  " + repo
 	pad := (m.width - len(footer)) / 2
 	if pad < 0 {
 		pad = 0

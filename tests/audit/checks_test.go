@@ -80,6 +80,27 @@ func TestPlatformPermissionModel(t *testing.T) {
 	}
 }
 
+// TestCheckUserKnownHostsDevNull_MultiValueAndQuoted covers the bypass fix: a
+// /dev/null listed among several paths, or quoted, must still be flagged, while a
+// genuine path is not.
+func TestCheckUserKnownHostsDevNull_MultiValueAndQuoted(t *testing.T) {
+	dir := t.TempDir()
+	for _, cfg := range []string{
+		"Host x\n    UserKnownHostsFile /dev/null ~/.ssh/known_hosts\n",
+		"Host x\n    UserKnownHostsFile \"/dev/null\"\n",
+	} {
+		sev, found := hasMessage(runConfigAudit(t, cfg, dir), "UserKnownHostsFile is /dev/null")
+		if !found {
+			t.Errorf("%q: /dev/null not detected", cfg)
+		} else if sev != audit.Critical {
+			t.Errorf("%q: severity = %s, want CRITICAL", cfg, sev)
+		}
+	}
+	if _, found := hasMessage(runConfigAudit(t, "Host x\n    UserKnownHostsFile ~/.ssh/known_hosts\n", dir), "UserKnownHostsFile is /dev/null"); found {
+		t.Error("a genuine known_hosts path must not be flagged")
+	}
+}
+
 func TestCheckConfigPermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits are not meaningful on Windows")

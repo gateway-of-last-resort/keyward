@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,10 +14,10 @@ import (
 func Serialize(c *Config) []byte {
 	var sb = strings.Builder{}
 
+	// Always join with '\n'; each unchanged token's Raw already carries its own
+	// trailing '\r' where the original line was CRLF, so mixed and CRLF files
+	// round-trip byte-for-byte instead of being force-converted to one style.
 	newline := "\n"
-	if bytes.Contains(c.Original, []byte("\r\n")) {
-		newline = "\r\n"
-	}
 
 	for _, token := range c.Global.Tokens {
 		if token.Raw != "" {

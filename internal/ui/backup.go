@@ -262,8 +262,8 @@ func (m backupModel) runBackup(password string) tea.Cmd {
 	return func() tea.Msg {
 		masterPath := filepath.Join(m.vaultDir, "master.key")
 
-		// initialise vault if master.key doesn't exist yet
-		if _, err := os.Stat(masterPath); os.IsNotExist(err) {
+		// initialise vault only if neither master.key nor a recoverable .bak exists
+		if !crypto.MasterKeyExists(masterPath) {
 			if _, err := crypto.InitMasterKey(masterPath, password); err != nil {
 				return backupResultMsg{err: fmt.Errorf("init vault: %w", err)}
 			}

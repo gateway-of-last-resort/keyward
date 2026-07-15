@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gateway-of-last-resort/keyward/internal/config"
@@ -34,6 +35,84 @@ func TestParseBytes_SingleHost(t *testing.T) {
 	}
 	if b.IsMatch {
 		t.Error("IsMatch should be false for Host block")
+	}
+}
+
+// TestParseBytes_EqualsSeparator covers ssh_config(5)'s "keyword = argument"
+// form (optional whitespace around '='): the value must not keep the '=', and the
+// line must still round-trip byte-identically (it was not edited).
+func TestParseBytes_EqualsSeparator(t *testing.T) {
+	for _, raw := range []string{
+		"Host web\n    Port=2222\n",
+		"Host web\n    Port =2222\n",
+		"Host web\n    Port = 2222\n",
+		"Host web\n\tPort\t=\t2222\n",
+	} {
+		c := cfgBytes(t, raw)
+		if len(c.Blocks) != 1 {
+			t.Fatalf("%q: want 1 block, got %d", raw, len(c.Blocks))
+		}
+		vals, ok := config.GetParam(&c.Blocks[0], "Port")
+		if !ok || len(vals) == 0 || vals[0] != "2222" {
+			t.Errorf("%q: Port = %q (ok=%v), want [\"2222\"]", raw, vals, ok)
+		}
+		if got := config.Serialize(&c); !bytes.Equal(got, []byte(raw)) {
+			t.Errorf("%q: round-trip changed bytes:\n%q", raw, got)
+		}
+	}
+}
+
+// TestParseBytes_HostEqualsPattern checks that "Host=pattern" (no space) starts a
+// block, not a stray param glued onto the previous one.
+func TestParseBytes_HostEqualsPattern(t *testing.T) {
+	c := cfgBytes(t, "Host=example\n    User root\n")
+	if len(c.Blocks) != 1 {
+		t.Fatalf("Host=example: want 1 block, got %d", len(c.Blocks))
+	}
+	if c.Blocks[0].Pattern != "example" {
+		t.Errorf("Pattern = %q, want example", c.Blocks[0].Pattern)
+	}
+}
+
+// TestParseBytes_MixedLineEndings checks that a file mixing CRLF and LF lines
+// round-trips byte-for-byte, rather than being force-converted to one style.
+func TestParseBytes_MixedLineEndings(t *testing.T) {
+	for _, raw := range []string{
+		"Host a\r\n    User x\nHost b\n", // mixed
+		"Host a\r\n    User root\r\n",    // all CRLF
+		"Host a\n    User root\n",        // all LF
+	} {
+		c := cfgBytes(t, raw)
+		if got := config.Serialize(&c); !bytes.Equal(got, []byte(raw)) {
+			t.Errorf("round-trip changed line endings:\n in: %q\nout: %q", raw, got)
+		}
+	}
+}
+
+// TestRenameHost_MatchBlock guards against silent divergence: renaming a Match
+// block must rewrite the on-disk Match line, not only b.Pattern in memory.
+func TestRenameHost_MatchBlock(t *testing.T) {
+	c := cfgBytes(t, "Match host *.corp\n    User root\n")
+	config.RenameHost(&c.Blocks[0], "host *.example")
+	out := string(config.Serialize(&c))
+	if c.Blocks[0].Pattern != "host *.example" {
+		t.Fatalf("Pattern = %q, want %q", c.Blocks[0].Pattern, "host *.example")
+	}
+	if !strings.Contains(out, "Match host *.example") {
+		t.Errorf("serialized config did not follow the rename:\n%s", out)
+	}
+	if strings.Contains(out, "*.corp") {
+		t.Errorf("old Match pattern still present after rename:\n%s", out)
+	}
+}
+
+// TestKeywords_ExtendedRecognised confirms the parser recognises common keywords
+// that were missing, so they can be added and their commented form toggled.
+func TestKeywords_ExtendedRecognised(t *testing.T) {
+	for _, kw := range []string{"IdentitiesOnly", "CertificateFile", "Include", "GatewayPorts", "PKCS11Provider"} {
+		if !config.IsValidSSHKeyword(kw) {
+			t.Errorf("keyword %q should be recognised", kw)
+		}
 	}
 }
 

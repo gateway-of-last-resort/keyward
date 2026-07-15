@@ -72,6 +72,52 @@ func TestRotateKey_CrashSafe(t *testing.T) {
 	}
 }
 
+// TestRotateKey_NoPublicKey rotates a private-only key (as with an imported
+// protected key that has no .pub). The new public key must land at the standard
+// <priv>.pub path, not be left as an orphaned <name>.rotate-tmp.pub, and Parse
+// must surface exactly one pair rather than a ghost public-only key.
+func TestRotateKey_NoPublicKey(t *testing.T) {
+	dir := t.TempDir()
+	orig, err := keys.GenerateKeys(dir, generateOpts(dir, "id_ed25519"))
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if err := os.Remove(orig.PublicKeyPath); err != nil {
+		t.Fatal(err)
+	}
+	orig.PublicKeyPath = "" // present the key as private-only
+
+	newKey, _, err := keys.RotateKey(orig, generateOpts(dir, "id_ed25519"))
+	if err != nil {
+		t.Fatalf("RotateKey: %v", err)
+	}
+
+	wantPub := orig.PrivateKeyPath + ".pub"
+	if newKey.PublicKeyPath != wantPub {
+		t.Errorf("new PublicKeyPath = %q, want %q", newKey.PublicKeyPath, wantPub)
+	}
+	if _, err := os.Stat(wantPub); err != nil {
+		t.Errorf("public key not written at %q: %v", wantPub, err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".rotate-tmp") {
+			t.Errorf("leftover temp file: %s", e.Name())
+		}
+	}
+	parsed, err := keys.Parse(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("Parse found %d keys, want 1 (ghost public-only key?)", len(parsed))
+	}
+}
+
 // A generation failure must leave the existing key completely untouched — no
 // rename, no .bak — since generation now happens before anything live is moved.
 func TestRotateKey_GenerationFailureLeavesKeyIntact(t *testing.T) {

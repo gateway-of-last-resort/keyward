@@ -41,7 +41,7 @@ func cmdBackup(args []string, stdout, stderr io.Writer) int {
 	}
 
 	masterKeyPath := filepath.Join(env.VaultDir, "master.key")
-	if _, err := os.Stat(masterKeyPath); err != nil {
+	if !crypto.MasterKeyExists(masterKeyPath) {
 		fmt.Fprintln(stderr, "keyward: no vault found; run keyward once to set one up")
 		return 1
 	}

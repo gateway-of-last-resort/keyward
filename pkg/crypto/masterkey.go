@@ -186,11 +186,37 @@ func InitMasterKey(path, password string) (age.Identity, error) {
 	return identity, nil
 }
 
+// MasterKeyExists reports whether a master key is present at path, counting a
+// leftover path+".bak" (from a crash during a write or password change) as
+// present. Callers use this to decide "unlock" vs "create a new vault"; treating
+// a recoverable .bak as absent would create a fresh identity and orphan all
+// existing metadata and backups.
+func MasterKeyExists(path string) bool {
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+	if _, err := os.Stat(path + ".bak"); err == nil {
+		return true
+	}
+	return false
+}
+
 // LoadMasterKey reads path, derives the KEK from password via Argon2id, and returns the decrypted identity.
 func LoadMasterKey(path, password string) (age.Identity, error) {
 	_, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, ErrMasterKeyNotFound
+		// A crash during a password change or write can leave only the .bak
+		// (ChangeMasterKeyPassword renames the current key aside before writing
+		// the replacement). Promote it to the primary path and continue, mirroring
+		// the metadata store's .bak recovery, so the vault is never lost to an
+		// interrupted rewrite.
+		bak := path + ".bak"
+		if _, bakErr := os.Stat(bak); bakErr != nil {
+			return nil, ErrMasterKeyNotFound
+		}
+		if rnErr := os.Rename(bak, path); rnErr != nil {
+			return nil, fmt.Errorf("%w: %w", ErrCorruptedMasterKey, rnErr)
+		}
 	} else if err != nil {
 		return nil, err
 	}

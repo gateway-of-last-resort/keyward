@@ -7,56 +7,52 @@ import (
 )
 
 // hasKeyword reports whether the lowercased, trimmed line begins with keyword
-// followed by whitespace (space or tab). ssh_config(5) allows any whitespace
-// as the separator, so "Host\tgithub.com" is as valid as "Host github.com".
+// followed by a keyword/argument separator. ssh_config(5) separates a keyword
+// from its argument with whitespace or optional-whitespace + '=', so "Host\tx",
+// "Host x", and "Host=x" are all valid block starts.
 func hasKeyword(lower, keyword string) bool {
 	if !strings.HasPrefix(lower, keyword) {
 		return false
 	}
 	rest := lower[len(keyword):]
-	return len(rest) > 0 && (rest[0] == ' ' || rest[0] == '\t')
+	return len(rest) > 0 && (rest[0] == ' ' || rest[0] == '\t' || rest[0] == '=')
+}
+
+// keywordArg returns the argument following a keyword of the given length,
+// accepting either whitespace or a single '=' (with optional surrounding
+// whitespace) as the separator per ssh_config(5). So "Host = x", "Host=x", and
+// "Host x" all yield "x".
+func keywordArg(trimmed string, keywordLen int) string {
+	rest := strings.TrimLeft(trimmed[keywordLen:], " \t")
+	rest = strings.TrimPrefix(rest, "=")
+	return strings.TrimSpace(rest)
 }
 
 func parseParam(raw string) Token {
-	var t Token
-	t.Type = PARAM
-	t.Raw = raw
+	t := Token{Type: PARAM, Raw: raw}
+	trimmed := strings.TrimSpace(raw)
 
-	trimmed := strings.TrimSpace(t.Raw)
-
-	eqIdx := strings.Index(trimmed, "=")
-	// Any whitespace separates a key from its value, not just a literal space.
-	wsIdx := strings.IndexAny(trimmed, " \t")
-	var sepIdx int
-	var hasSep bool
-
-	switch {
-	case eqIdx == -1 && wsIdx == -1:
+	// The key runs up to the first separator character: whitespace or '='.
+	sepStart := strings.IndexAny(trimmed, " \t=")
+	if sepStart == -1 {
 		t.Key = trimmed
 		t.Sep = " "
+		return t
+	}
+	t.Key = trimmed[:sepStart]
 
-	case eqIdx == -1:
-		sepIdx, hasSep = wsIdx, true
-		t.Sep = " "
-
-	case wsIdx == -1:
-		sepIdx, hasSep = eqIdx, true
+	// ssh_config(5): the argument is separated by whitespace, or by optional
+	// whitespace + a single '=' + optional whitespace. Detect which so an edited
+	// line re-serialises in the same style, and so a '=' inside the value (e.g. an
+	// option string) is not mistaken for the separator.
+	rest := strings.TrimLeft(trimmed[sepStart:], " \t")
+	if strings.HasPrefix(rest, "=") {
 		t.Sep = "="
-
-	case eqIdx < wsIdx:
-		sepIdx, hasSep = eqIdx, true
-		t.Sep = "="
-
-	default:
-		sepIdx, hasSep = wsIdx, true
+		rest = strings.TrimLeft(rest[1:], " \t")
+	} else {
 		t.Sep = " "
 	}
-
-	if hasSep {
-		t.Key = strings.TrimSpace(trimmed[:sepIdx])
-		t.Value = strings.TrimSpace(trimmed[sepIdx+1:])
-	}
-
+	t.Value = strings.TrimSpace(rest)
 	return t
 }
 
@@ -66,8 +62,11 @@ func tokenize(data []byte) []Token {
 
 	for i, line := range lines {
 		tokens[i].LineNum = i + 1
+		// Keep any trailing '\r' in Raw so a CRLF (or mixed-ending) file
+		// round-trips byte-for-byte: Serialize joins tokens with '\n' and each
+		// Raw carries its own '\r' where the original had one. Parsing below works
+		// off the TrimSpace'd form, so the '\r' never leaks into Key/Value.
 		raw := string(line)
-		raw = strings.TrimRight(raw, "\r")
 		tokens[i].Raw = raw
 
 		trimmed := strings.TrimSpace(raw)
@@ -79,16 +78,14 @@ func tokenize(data []byte) []Token {
 		} else {
 			lower := strings.ToLower(trimmed)
 			if hasKeyword(lower, "host") {
-				value := strings.TrimSpace(trimmed[len("host"):])
 				tokens[i].Type = HOST
 				tokens[i].Key = trimmed[:len("host")]
-				tokens[i].Value = value
+				tokens[i].Value = keywordArg(trimmed, len("host"))
 				tokens[i].Sep = " "
 			} else if hasKeyword(lower, "match") {
-				value := strings.TrimSpace(trimmed[len("match"):])
 				tokens[i].Type = MATCH
 				tokens[i].Key = trimmed[:len("match")]
-				tokens[i].Value = value
+				tokens[i].Value = keywordArg(trimmed, len("match"))
 				tokens[i].Sep = " "
 			} else {
 				tokens[i] = parseParam(raw)

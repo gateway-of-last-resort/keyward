@@ -30,9 +30,17 @@ func RotateKey(key Key, opts GenerateOptions) (newKey Key, bakPath string, err e
 
 	dir := filepath.Dir(key.PrivateKeyPath)
 	livePriv := key.PrivateKeyPath
-	livePub := key.PublicKeyPath
+	oldPub := key.PublicKeyPath
+	// The rotated key always has a public half. If the old key had no .pub file
+	// (e.g. an imported private-only key), the new public key goes to the standard
+	// path next to the private key, instead of leaving the generated temporary
+	// <name>.rotate-tmp.pub behind as an orphaned public-only "ghost" key.
+	newPub := oldPub
+	if newPub == "" {
+		newPub = livePriv + ".pub"
+	}
 	privBak := livePriv + ".bak"
-	pubBak := livePub + ".bak"
+	pubBak := newPub + ".bak"
 
 	// 1. Generate the new pair under a temporary name. Nothing live is touched,
 	//    so a failure here leaves the existing key completely intact.
@@ -47,13 +55,14 @@ func RotateKey(key Key, opts GenerateOptions) (newKey Key, bakPath string, err e
 	tmpPub := tmpKey.PublicKeyPath
 
 	// 2. Preserve the old pair as .bak by copying, so the live files stay in
-	//    place until they are atomically replaced.
+	//    place until they are atomically replaced. Only back up the public half if
+	//    the old key actually had one.
 	if err := copyFile(livePriv, privBak, 0600); err != nil {
 		_ = errors.Join(os.Remove(tmpPriv), os.Remove(tmpPub))
 		return Key{}, "", errors.Join(ErrRotateFailed, err)
 	}
-	if livePub != "" {
-		if err := copyFile(livePub, pubBak, 0644); err != nil {
+	if oldPub != "" {
+		if err := copyFile(oldPub, pubBak, 0644); err != nil {
 			_ = errors.Join(os.Remove(tmpPriv), os.Remove(tmpPub), os.Remove(privBak))
 			return Key{}, "", errors.Join(ErrRotateFailed, err)
 		}
@@ -62,21 +71,23 @@ func RotateKey(key Key, opts GenerateOptions) (newKey Key, bakPath string, err e
 	// 3. Move the new pair into the live names. rename replaces the destination,
 	//    so the private key is always present under its name.
 	if err := os.Rename(tmpPriv, livePriv); err != nil {
-		_ = errors.Join(os.Remove(tmpPriv), os.Remove(tmpPub), os.Remove(privBak), os.Remove(pubBak))
+		cleanup := []error{os.Remove(tmpPriv), os.Remove(tmpPub), os.Remove(privBak)}
+		if oldPub != "" {
+			cleanup = append(cleanup, os.Remove(pubBak))
+		}
+		_ = errors.Join(cleanup...)
 		return Key{}, "", errors.Join(ErrRotateFailed, ErrRenameFailed, err)
 	}
-	if livePub != "" {
-		if err := os.Rename(tmpPub, livePub); err != nil {
-			// Private key already swapped; restore the old one from .bak so the
-			// live pair stays consistent, and report failure.
-			rb := copyFile(privBak, livePriv, 0600)
-			_ = os.Remove(tmpPub)
-			return Key{}, "", errors.Join(ErrRotateFailed, ErrRenameFailed, err, rb)
-		}
+	if err := os.Rename(tmpPub, newPub); err != nil {
+		// Private key already swapped; restore the old one from .bak so the live
+		// pair stays consistent, and report failure.
+		rb := copyFile(privBak, livePriv, 0600)
+		_ = os.Remove(tmpPub)
+		return Key{}, "", errors.Join(ErrRotateFailed, ErrRenameFailed, err, rb)
 	}
 
 	tmpKey.PrivateKeyPath = livePriv
-	tmpKey.PublicKeyPath = livePub
+	tmpKey.PublicKeyPath = newPub
 	return tmpKey, privBak, nil
 }
 
@@ -88,7 +99,10 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	// O_NOFOLLOW refuses a pre-planted symlink at dst, so a hostile <key>.bak
+	// symlink can't redirect the copied private key elsewhere (matching the
+	// symlink guard used when generating keys). It is a no-op on Windows.
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|oNoFollow, perm)
 	if err != nil {
 		return err
 	}

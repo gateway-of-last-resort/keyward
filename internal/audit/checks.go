@@ -383,10 +383,22 @@ func checkForwardAgent(cfg *config.Config) []AuditResult {
 	return results
 }
 
+// referencesDevNull reports whether a UserKnownHostsFile value names /dev/null as
+// one of its space-separated (and possibly quoted) paths, so a value like
+// "/dev/null ~/.ssh/known_hosts" or "\"/dev/null\"" is still caught.
+func referencesDevNull(value string) bool {
+	for _, f := range strings.Fields(value) {
+		if strings.Trim(f, `"'`) == "/dev/null" {
+			return true
+		}
+	}
+	return false
+}
+
 func checkUserKnownHostsDevNull(cfg *config.Config) []AuditResult {
 	var results []AuditResult
 	for _, scope := range configScopes(cfg) {
-		if values, found := config.GetParam(scope, "UserKnownHostsFile"); found && slices.Contains(values, "/dev/null") {
+		if values, found := config.GetParam(scope, "UserKnownHostsFile"); found && slices.ContainsFunc(values, referencesDevNull) {
 			results = append(results, AuditResult{
 				Severity: Critical,
 				Category: CategoryConfig,

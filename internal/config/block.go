@@ -120,12 +120,15 @@ func RemoveParamAt(b *Block, idx int) {
 	b.Tokens = slices.Delete(b.Tokens, idx, idx+1)
 }
 
-// RenameHost updates the Host token value and b.Pattern to pattern.
+// RenameHost updates the block's header token (Host or Match) and b.Pattern to
+// pattern. It rewrites the Match token too, not just Host, so the on-disk line and
+// b.Pattern never diverge (a Match block used to update b.Pattern in memory while
+// leaving the file untouched).
 func RenameHost(b *Block, pattern string) {
 
 	pattern = sanitize(pattern)
 	for i := range b.Tokens {
-		if b.Tokens[i].Type == HOST {
+		if b.Tokens[i].Type == HOST || b.Tokens[i].Type == MATCH {
 			b.Tokens[i].Value = pattern
 			b.Tokens[i].Raw = ""
 			break

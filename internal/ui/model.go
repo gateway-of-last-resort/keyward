@@ -77,6 +77,11 @@ type Model struct {
 	errToken int
 }
 
+// Version is shown in the Settings footer. main sets it to the ldflags-injected
+// build version so the footer matches `keyward --version` (and the release tag)
+// instead of drifting from a hardcoded string. Defaults to "dev" for local builds.
+var Version = "dev"
+
 // New creates a ready-to-run Model.
 // It checks for an existing master key in vaultDir and starts with ScreenSetup
 // (first run) or ScreenUnlock (vault already initialised).
@@ -87,7 +92,7 @@ func New(k []keys.Key, cfg *config.Config, report audit.AuditReport, sshDir, vau
 	var setupView setupModel
 	var unlockView unlockModel
 
-	if _, err := os.Stat(masterKeyPath); os.IsNotExist(err) {
+	if !crypto.MasterKeyExists(masterKeyPath) {
 		initialScreen = ScreenSetup
 		setupView = newSetupModel(vaultDir, masterKeyPath)
 	} else {
@@ -445,7 +450,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case keyDeletedMsg:
 		for i, k := range m.keys {
-			if k.PrivateKeyPath == msg.path {
+			if keyID(k) == msg.path {
 				if m.store != nil && k.Fingerprint != "" {
 					_ = storage.Delete(m.store, k.Fingerprint)
 				}
@@ -509,6 +514,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case backupResultMsg:
 		m.backupView, _ = m.backupView.update(msg)
 		if msg.err == nil && msg.restored {
+			// Restore overwrote metadata.age on disk. Reload the in-memory store
+			// from it, otherwise the restored tags/notes stay invisible until a
+			// restart and the next metadata Save clobbers the just-restored file
+			// with the stale store.
+			if m.identity != nil {
+				if s, err := storage.Load(m.vaultDir, m.identity); err == nil {
+					m.store = &s
+				}
+			}
 			return m, m.reloadKeys()
 		}
 		return m, nil
@@ -591,6 +605,10 @@ func (m Model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cfgEditor, cmd = m.cfgEditor.update(msg)
 		if m.cfgEditor.saved {
 			m.cfgEditor.saved = false
+			// The config on disk just changed; re-scan and re-run the audit so the
+			// grade and findings reflect the save instead of going stale until the
+			// next restart or key operation.
+			cmd = tea.Batch(cmd, m.reloadKeys())
 		}
 	case ScreenKnownHosts:
 		m.knownHosts, cmd = m.knownHosts.update(msg)
@@ -780,14 +798,22 @@ func screenHint(s Screen) string {
 
 // saveStore encrypts and writes the metadata store to disk in a background command.
 func (m Model) saveStore() tea.Cmd {
-	store := m.store
+	if m.store == nil {
+		return nil
+	}
+	// Snapshot the store's map so the background Save marshals a stable copy. The
+	// main loop may mutate m.store (fast successive metadata edits) while Save is
+	// running, which would otherwise be a concurrent map read/write and crash the
+	// runtime.
+	snapshot := *m.store
+	snapshot.Keys = make(map[string]storage.KeyMetadata, len(m.store.Keys))
+	for k, v := range m.store.Keys {
+		snapshot.Keys[k] = v
+	}
 	identity := m.identity
 	vaultDir := m.vaultDir
 	return func() tea.Msg {
-		if store == nil {
-			return nil
-		}
-		if err := storage.Save(store, vaultDir, identity); err != nil {
+		if err := storage.Save(&snapshot, vaultDir, identity); err != nil {
 			return errMsg{err}
 		}
 		return nil

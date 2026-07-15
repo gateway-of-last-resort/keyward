@@ -22,6 +22,8 @@ import (
 	"github.com/gateway-of-last-resort/keyward/internal/config"
 	"github.com/gateway-of-last-resort/keyward/internal/keys"
 	"github.com/gateway-of-last-resort/keyward/internal/knownhosts"
+	"github.com/gateway-of-last-resort/keyward/internal/storage"
+	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
 // k builds a tea.KeyMsg whose String() matches what the update funcs switch on.
@@ -174,6 +176,164 @@ func TestFullProgram_DrillIntoDetailAndBack(t *testing.T) {
 	m, _ = sendRoot(t, m, "esc")
 	if m.active != ScreenKeys {
 		t.Fatalf("esc from Detail should return to Keys, active = %v", m.active)
+	}
+}
+
+// TestRestore_ReloadsStore guards against silent metadata loss: after a restore
+// overwrites metadata.age, the in-memory store must be reloaded from it, otherwise
+// the restored entries are invisible and the next Save clobbers the restored file.
+func TestRestore_ReloadsStore(t *testing.T) {
+	dir := t.TempDir()
+	vaultDir := filepath.Join(dir, ".keyward")
+	if err := storage.Init(vaultDir); err != nil {
+		t.Fatal(err)
+	}
+	id, err := crypto.InitMasterKey(filepath.Join(vaultDir, "master.key"), "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The on-disk metadata.age (as if just restored) carries an entry.
+	restored := storage.Store{Keys: map[string]storage.KeyMetadata{}}
+	if err := storage.Put(&restored, storage.KeyMetadata{Fingerprint: "SHA256:x", Note: "restored"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Save(&restored, vaultDir, id); err != nil {
+		t.Fatal(err)
+	}
+
+	// The model still holds the stale, empty store it loaded at unlock.
+	stale := storage.Store{Keys: map[string]storage.KeyMetadata{}}
+	m := Model{
+		active:     ScreenBackup,
+		identity:   id,
+		vaultDir:   vaultDir,
+		sshDir:     dir,
+		store:      &stale,
+		backupView: newBackupModel(dir, vaultDir, id),
+	}
+
+	next, _ := m.Update(backupResultMsg{restored: true})
+	m = next.(Model)
+
+	if _, err := storage.Get(*m.store, "SHA256:x"); err != nil {
+		t.Fatalf("store not reloaded after restore: %v", err)
+	}
+}
+
+// TestRotateBitSize_ClampsWeakRSA covers the fix that lets an audit-flagged weak
+// RSA key actually rotate: the size is clamped up to 4096 for RSA (preserving an
+// already-strong size), and ignored for other algorithms.
+func TestRotateBitSize_ClampsWeakRSA(t *testing.T) {
+	cases := []struct {
+		algo string
+		in   int
+		want int
+	}{
+		{"ssh-rsa", 1024, 4096},
+		{"ssh-rsa", 2048, 4096},
+		{"ssh-rsa", 4096, 4096},
+		{"ssh-rsa", 8192, 8192},
+		{"ssh-ed25519", 256, 256},
+	}
+	for _, c := range cases {
+		if got := rotateBitSize(c.algo, c.in); got != c.want {
+			t.Errorf("rotateBitSize(%q, %d) = %d, want %d", c.algo, c.in, got, c.want)
+		}
+	}
+}
+
+// TestKeyList_PublicOnlySeverity ensures the key-list badge reflects a public-only
+// key's audit findings (recorded under its public path), instead of showing "OK".
+func TestKeyList_PublicOnlySeverity(t *testing.T) {
+	pub := "/ssh/legacy.pub"
+	k := keys.Key{PublicKeyPath: pub, IsPublicOnly: true, Algorithm: "ssh-dss"}
+	results := []audit.AuditResult{{KeyPath: pub, Severity: audit.Critical, Category: audit.CategoryKey, Message: "weak"}}
+
+	m := newKeyListModel([]keys.Key{k}, results, "/ssh")
+	if len(m.items) != 1 {
+		t.Fatalf("want 1 item, got %d", len(m.items))
+	}
+	if m.items[0].severity != audit.Critical {
+		t.Errorf("public-only key severity = %q, want CRITICAL", m.items[0].severity)
+	}
+}
+
+// TestDeleteKey_PublicOnly deletes a public-only key (empty private path): the
+// public file is removed, and the emitted keyDeletedMsg carries the public path
+// as identity rather than an empty string.
+func TestDeleteKey_PublicOnly(t *testing.T) {
+	dir := t.TempDir()
+	pub := filepath.Join(dir, "orphan.pub")
+	if err := os.WriteFile(pub, []byte("ssh-ed25519 AAAA orphan\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	k := keys.Key{PublicKeyPath: pub, IsPublicOnly: true}
+
+	del, ok := runCmd(deleteKeyCmd(k)).(keyDeletedMsg)
+	if !ok {
+		t.Fatalf("want keyDeletedMsg")
+	}
+	if del.path != pub {
+		t.Errorf("keyDeletedMsg.path = %q, want %q", del.path, pub)
+	}
+	if _, err := os.Stat(pub); !os.IsNotExist(err) {
+		t.Error("public key file not removed")
+	}
+}
+
+// TestKeyDeleted_RemovesCorrectPublicOnly ensures deletion targets the identified
+// key, not the first public-only entry (which all shared an empty private path).
+func TestKeyDeleted_RemovesCorrectPublicOnly(t *testing.T) {
+	a := keys.Key{PublicKeyPath: "/ssh/a.pub", IsPublicOnly: true}
+	b := keys.Key{PublicKeyPath: "/ssh/b.pub", IsPublicOnly: true}
+	m := Model{active: ScreenKeys, keys: []keys.Key{a, b}, sshDir: "/ssh"}
+	m.keyList = newKeyListModel(m.keys, nil, "/ssh")
+
+	next, _ := m.Update(keyDeletedMsg{path: keyID(b)})
+	m = next.(Model)
+
+	if len(m.keys) != 1 || keyID(m.keys[0]) != keyID(a) {
+		t.Fatalf("wrong key removed; remaining = %+v", m.keys)
+	}
+}
+
+// TestSaveStore_SnapshotsBeforeSave proves the background save marshals a snapshot:
+// mutating the live store after saveStore() is called must not change what lands
+// on disk, so a concurrent metadata edit cannot race the Save's map read.
+func TestSaveStore_SnapshotsBeforeSave(t *testing.T) {
+	dir := t.TempDir()
+	vaultDir := filepath.Join(dir, ".keyward")
+	if err := storage.Init(vaultDir); err != nil {
+		t.Fatal(err)
+	}
+	id, err := crypto.InitMasterKey(filepath.Join(vaultDir, "master.key"), "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st := storage.Store{Keys: map[string]storage.KeyMetadata{}}
+	if err := storage.Put(&st, storage.KeyMetadata{Fingerprint: "SHA256:x", Note: "snapshot"}); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{store: &st, identity: id, vaultDir: vaultDir}
+
+	cmd := m.saveStore()
+	// Mutate the live store after the snapshot is taken but before the save runs.
+	delete(st.Keys, "SHA256:x")
+	st.Keys["SHA256:y"] = storage.KeyMetadata{Fingerprint: "SHA256:y"}
+
+	runCmd(cmd)
+
+	loaded, err := storage.Load(vaultDir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.Get(loaded, "SHA256:x"); err != nil {
+		t.Error("snapshot should have saved the pre-mutation entry SHA256:x")
+	}
+	if _, err := storage.Get(loaded, "SHA256:y"); err == nil {
+		t.Error("post-snapshot mutation SHA256:y must not appear in the saved store")
 	}
 }
 
