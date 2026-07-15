@@ -37,6 +37,42 @@ func TestParseBytes_SingleHost(t *testing.T) {
 	}
 }
 
+// TestParseBytes_EqualsSeparator covers ssh_config(5)'s "keyword = argument"
+// form (optional whitespace around '='): the value must not keep the '=', and the
+// line must still round-trip byte-identically (it was not edited).
+func TestParseBytes_EqualsSeparator(t *testing.T) {
+	for _, raw := range []string{
+		"Host web\n    Port=2222\n",
+		"Host web\n    Port =2222\n",
+		"Host web\n    Port = 2222\n",
+		"Host web\n\tPort\t=\t2222\n",
+	} {
+		c := cfgBytes(t, raw)
+		if len(c.Blocks) != 1 {
+			t.Fatalf("%q: want 1 block, got %d", raw, len(c.Blocks))
+		}
+		vals, ok := config.GetParam(&c.Blocks[0], "Port")
+		if !ok || len(vals) == 0 || vals[0] != "2222" {
+			t.Errorf("%q: Port = %q (ok=%v), want [\"2222\"]", raw, vals, ok)
+		}
+		if got := config.Serialize(&c); !bytes.Equal(got, []byte(raw)) {
+			t.Errorf("%q: round-trip changed bytes:\n%q", raw, got)
+		}
+	}
+}
+
+// TestParseBytes_HostEqualsPattern checks that "Host=pattern" (no space) starts a
+// block, not a stray param glued onto the previous one.
+func TestParseBytes_HostEqualsPattern(t *testing.T) {
+	c := cfgBytes(t, "Host=example\n    User root\n")
+	if len(c.Blocks) != 1 {
+		t.Fatalf("Host=example: want 1 block, got %d", len(c.Blocks))
+	}
+	if c.Blocks[0].Pattern != "example" {
+		t.Errorf("Pattern = %q, want example", c.Blocks[0].Pattern)
+	}
+}
+
 func TestParseBytes_GlobalParams(t *testing.T) {
 	raw := `ServerAliveInterval 60
 ServerAliveCountMax 3
