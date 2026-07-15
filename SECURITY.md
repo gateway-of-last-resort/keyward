@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-Keyward is pre-1.0. Security fixes are applied to the latest released version
-only. Please upgrade to the newest release before reporting an issue.
+Security fixes are applied to the latest released version. Please upgrade to the
+newest release before reporting an issue.
 
 | Version | Supported |
 | ------- | --------- |
-| latest `0.x` | ✅ |
-| older `0.x` | ❌ |
+| latest `1.x` | ✅ |
+| older | ❌ |
 
 ## Reporting a vulnerability
 
@@ -146,8 +146,8 @@ memory. The newest 5 backups are kept; older ones are pruned after each write.
 
 ## Format stability and migration policy
 
-Keyward is pre-1.0 and the on-disk formats above are approaching a stability
-commitment. From **1.0.0** onward:
+As of **1.0.0** the on-disk formats above are stable and covered by the following
+guarantees:
 
 - **Backward-compatible reads.** A release reads any `master.key`, `metadata.age`,
   or backup written by an earlier release; existing vaults keep working across
@@ -160,7 +160,7 @@ commitment. From **1.0.0** onward:
   through its entry names.
 - **Forward tolerance.** Unknown JSON fields in `metadata.age` are ignored rather
   than rejected, so a store touched by a newer minor release still loads on an
-  older one within the 0.x line.
+  older one across 1.x releases.
 
 ## Local file-handling guarantees
 
