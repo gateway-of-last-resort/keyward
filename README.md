@@ -19,7 +19,9 @@
 - [Usage](#usage)
 - [Command line](#command-line)
 - [Security](#security)
+- [Stability](#stability)
 - [Building from source](#building-from-source)
+- [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -185,6 +187,15 @@ password (argon2id → ChaCha20-Poly1305 → age identity). For the full threat
 model, cryptographic details, release-signature verification, and how to report
 a vulnerability, see [SECURITY.md](SECURITY.md).
 
+## Stability
+
+As of **1.0.0**, Keyward follows [semantic versioning](https://semver.org). The
+on-disk formats (`master.key`, `metadata.age`, and `.tar.age` backups) and the
+command-line interface are stable: a vault created today keeps working across all
+`1.x` releases, and any breaking change to a format or flag would require a `2.0`.
+The format and migration guarantees are documented in
+[SECURITY.md](SECURITY.md#format-stability-and-migration-policy).
+
 ## Building from source
 
 ```bash
@@ -198,6 +209,20 @@ Requires Go 1.26+. The security-sensitive core (crypto, config, storage, audit,
 key parsing) depends only on [`filippo.io/age`](https://filippo.io/age) and
 `golang.org/x/crypto`; the terminal UI layer adds the
 [Charm](https://charm.sh) stack (`bubbletea`, `bubbles`, `lipgloss`).
+
+## Roadmap
+
+Ideas being considered for after 1.0 (directions, not commitments):
+
+- `Include` directive support in the config editor (multi-file configs)
+- More audit checks: duplicate fingerprints, SSH certificate detection, agent
+  socket permissions
+- Hardware-backed keys (`sk-ssh-ed25519@openssh.com`, FIDO2) and SSH certificate
+  management
+- Multiple or custom-location vaults, key-rotation reminders, and incremental
+  backups
+
+Feedback and feature requests are welcome via [issues](https://github.com/gateway-of-last-resort/keyward/issues).
 
 ## Contributing
 
