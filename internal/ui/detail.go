@@ -53,7 +53,10 @@ type keyDetailModel struct {
 func newKeyDetailModel(k keys.Key, results []audit.AuditResult, store *storage.Store, inAgent bool) keyDetailModel {
 	var findings []audit.AuditResult
 	for _, r := range results {
-		if r.KeyPath == k.PrivateKeyPath {
+		// Match on the key's identity (private path, or public path for a
+		// public-only key) since the audit records findings under the public path
+		// when there is no private key.
+		if r.KeyPath == keyID(k) {
 			findings = append(findings, r)
 		}
 	}

@@ -99,7 +99,10 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	// O_NOFOLLOW refuses a pre-planted symlink at dst, so a hostile <key>.bak
+	// symlink can't redirect the copied private key elsewhere (matching the
+	// symlink guard used when generating keys). It is a no-op on Windows.
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|oNoFollow, perm)
 	if err != nil {
 		return err
 	}
