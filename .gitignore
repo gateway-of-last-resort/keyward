@@ -35,6 +35,8 @@ go.work.sum
 !CONTRIBUTING.md
 
 !.github/**/*.md
+
+assets/launch
 # GoReleaser build output
 dist/
 
