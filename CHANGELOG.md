@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-17
+
+Config-editor fixes found while testing the 1.0.0 build on Linux.
+
+### Fixed
+
+- **Config editor** no longer collapses to a single host and a single parameter
+  right after a save. Handling the post-save re-scan rebuilt the editor and the
+  key list without restoring their size, so both rendered a one-row window until
+  the next tab switch. Nothing was ever written incorrectly — the file on disk
+  was always right.
+- **Comment attribution** follows the file's layout: a run of comments directly
+  above a `Host` describes that host, while a comment left below the last
+  parameter — a commented-out setting, say — now stays with the block it was
+  written under instead of surfacing under the next one.
+- **Comments in the config editor** are legible (they were painted in the frame
+  colour, near-invisible against the background) and show the cursor when
+  selected, which the `t` toggle needs.
+
 ## [1.0.0] - 2026-07-15
 
 First stable release. The on-disk formats (`master.key`, `metadata.age`, and
@@ -300,7 +319,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.7.0...v0.8.0
