@@ -487,6 +487,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cfg = msg.cfg // nil if no config found at new SSH dir
 		m.cfgEditor = newConfigModel(m.cfg, m.sshDir)
 		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
+		// Rebuilding those two screens drops their width/height; push the sizes
+		// back before returning. Without this the panes render with height 0 —
+		// their row windows clamp to a single line — until the next navigation
+		// happens to call propagateSize again.
+		m = m.propagateSize()
 		// Persist the SSH dir only after a successful scan.
 		return m, m.savePrefs()
 

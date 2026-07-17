@@ -470,6 +470,34 @@ func TestKeys_ImportKeepsListSize(t *testing.T) {
 	}
 }
 
+// Regression: saving the config triggers a re-scan, and handling the result
+// rebuilds both the config editor and the key list from scratch. That drops
+// their width/height, and the Hosts/Parameters panes clamp their row windows to
+// a single line — so right after a save the editor showed one host and one
+// param until the user switched tabs (navigate happens to call propagateSize).
+func TestConfig_ReloadKeepsPaneSize(t *testing.T) {
+	cfg := config.ParseBytes("/home/u/.ssh/config", []byte("Host a\n    User a\n\nHost b\n    User b\n"))
+	m := Model{active: ScreenConfig, width: 100, height: 40, cfg: &cfg}
+	m.cfgEditor = newConfigModel(m.cfg, "/home/u/.ssh")
+	m.keyList = newKeyListModel(nil, nil, "")
+	m = m.propagateSize()
+
+	baseline := m.cfgEditor.height
+	if baseline <= 1 {
+		t.Fatalf("baseline editor height = %d, want > 1", baseline)
+	}
+
+	next, _ := m.Update(keysReloadedMsg{sshDir: "/home/u/.ssh", cfg: &cfg})
+	m = next.(Model)
+
+	if m.cfgEditor.height != baseline {
+		t.Fatalf("editor height after reload = %d, want %d", m.cfgEditor.height, baseline)
+	}
+	if m.keyList.height != baseline {
+		t.Fatalf("key list height after reload = %d, want %d", m.keyList.height, baseline)
+	}
+}
+
 // ── §1/§2 setup & unlock validation ─────────────────────────────────────────
 
 func TestSetup_EmptyPassword(t *testing.T) { // §1.2
