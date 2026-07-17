@@ -179,6 +179,72 @@ Host work
 	}
 }
 
+// blockOf returns the index of the block whose tokens contain the raw line, or
+// -1. Comment attribution is about which block owns a line, so the tests below
+// assert on ownership rather than on the serialised bytes (which are identical
+// either way — every grouping writes the same tokens in the same order).
+func blockOf(c config.Config, rawLine string) int {
+	for i := range c.Blocks {
+		for _, tk := range c.Blocks[i].Tokens {
+			if tk.Raw == rawLine {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// TestParseBytes_CommentAttribution pins which block owns a comment sitting
+// between two blocks. A run of comments directly above a Host — no blank line
+// in between — describes that Host and opens its block. Anything cut off from
+// the Host by a blank line trails the block above instead. Before this, every
+// pending comment was flushed into the following block, so a commented-out
+// param at the end of one Host surfaced under the next one.
+func TestParseBytes_CommentAttribution(t *testing.T) {
+	raw := `# file header
+
+Host vpn
+    User ubuntu
+#    Port 22
+
+# describes pi4
+Host pi4
+    User pi
+`
+	c := cfgBytes(t, raw)
+
+	if len(c.Blocks) != 2 {
+		t.Fatalf("want 2 blocks, got %d", len(c.Blocks))
+	}
+
+	tests := []struct {
+		name string
+		line string
+		want int
+	}{
+		// Cut off from Host pi4 by a blank line: it is vpn's commented-out param.
+		{"trailing_comment_stays_with_block_above", "#    Port 22", 0},
+		// Directly above Host pi4: it describes pi4.
+		{"adjacent_comment_opens_next_block", "# describes pi4", 1},
+		// Nothing above the first Host to trail, and Global has no UI, so the
+		// header stays with the first block rather than vanishing from view.
+		{"file_header_stays_with_first_block", "# file header", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := blockOf(c, tt.line); got != tt.want {
+				t.Errorf("%q is owned by block %d, want %d", tt.line, got, tt.want)
+			}
+		})
+	}
+
+	// Regrouping must not disturb the bytes.
+	if got := config.Serialize(&c); !bytes.Equal(got, []byte(raw)) {
+		t.Errorf("Serialize changed content:\ngot:\n%s\nwant:\n%s", got, raw)
+	}
+}
+
 // TestParseBytes_OnlyComments is an edge case: a valid config with no Host blocks.
 func TestParseBytes_OnlyComments(t *testing.T) {
 	raw := `# This file is intentionally empty

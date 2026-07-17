@@ -33,8 +33,12 @@ var (
 	ColorWarning = lipgloss.Color("#F59E0B")
 
 	// Derived
-	colorDim  = lipgloss.Color("#4A4A5A") // muted secondary text
-	colorInfo = ColorLavender             // info severity → lavender
+	colorDim = lipgloss.Color("#4A4A5A") // muted secondary text
+	// colorComment tones commented-out config lines down without hiding them.
+	// Dimmer than body text, but well clear of ColorBorder — that is the frame
+	// colour and sits about 1.5:1 against the background, i.e. unreadable as text.
+	colorComment = lipgloss.Color("#6B6B80")
+	colorInfo    = ColorLavender // info severity → lavender
 )
 
 // ── Aliases used by screen files ─────────────────────────────────────────────

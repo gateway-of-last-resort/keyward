@@ -118,7 +118,7 @@ var (
 	// mint text, no bg fill (the mint accent bar carries the selection).
 	editingParamStyle = lipgloss.NewStyle().Foreground(ColorMint)
 
-	commentedStyle = lipgloss.NewStyle().Foreground(colBorder)
+	commentedStyle = lipgloss.NewStyle().Foreground(colorComment)
 	paramKeyStyle  = lipgloss.NewStyle().Foreground(colLabel)
 	unsavedStyle   = lipgloss.NewStyle().Foreground(colYellow).Bold(true)
 	savedStyle     = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
@@ -785,6 +785,11 @@ func (m configModel) renderParams(width int) string {
 				editingParamStyle.Render(fmt.Sprintf("%-20s", t.Key)),
 				m.editInput.View(),
 			)
+		case t.Type == config.COMMENT && focused && isCursor && !m.addingParam:
+			// A comment row holds the cursor like any other — 't' toggles it back
+			// into a live param — so it needs the same bar + fill. Without this the
+			// cursor disappeared whenever it stepped onto a commented-out line.
+			row = selAccentStyle.Render("▎") + activeParamStyle.Width(width-1).Render(fitRight(t.Raw, width-1))
 		case t.Type == config.COMMENT:
 			row = fmt.Sprintf(" %s", commentedStyle.Render(fitRight(t.Raw, width-1)))
 		case focused && isCursor && !m.addingParam:
