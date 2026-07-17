@@ -96,6 +96,27 @@ func tokenize(data []byte) []Token {
 	return tokens
 }
 
+// splitPending divides a run of COMMENT/EMPTY tokens sitting between the end of
+// one block and the Host line that opens the next. The trailing comments with no
+// blank line between them and that Host describe it, so they open the new block:
+//
+//	Host a
+//	    User a
+//	# commented-out param of a      <- trails a
+//	                                <- trails a
+//	# describes b                   <- opens b
+//	Host b
+//
+// Everything before that run (blank lines, and any comment separated from the
+// Host by one) belongs to the block above instead.
+func splitPending(pending []Token) (above, adjacent []Token) {
+	i := len(pending)
+	for i > 0 && pending[i-1].Type == COMMENT {
+		i--
+	}
+	return pending[:i], pending[i:]
+}
+
 func group(tokens []Token) (Block, []Block) {
 
 	var global Block
@@ -113,13 +134,20 @@ func group(tokens []Token) (Block, []Block) {
 			pending = append(pending, token)
 
 		case HOST, MATCH:
+			above, adjacent := splitPending(pending)
 			if current != nil {
+				current.Tokens = append(current.Tokens, above...)
 				blocks = append(blocks, *current)
+			} else {
+				// Nothing above the first Host to trail, and the Global block has
+				// no UI — keep the whole run with the first block so a file-header
+				// comment stays visible and editable.
+				adjacent = pending
 			}
 			newBlock := Block{}
 			newBlock.IsMatch = token.Type == MATCH
 			newBlock.Pattern = token.Value
-			newBlock.Tokens = append(newBlock.Tokens, pending...)
+			newBlock.Tokens = append(newBlock.Tokens, adjacent...)
 			newBlock.Tokens = append(newBlock.Tokens, token)
 			current = &newBlock
 			pending = pending[:0]
