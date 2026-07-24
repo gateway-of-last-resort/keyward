@@ -73,6 +73,16 @@ binary.
 brew install gateway-of-last-resort/tap/keyward
 ```
 
+### Arch Linux (AUR)
+
+```bash
+yay -S keyward-bin
+```
+
+The [`keyward-bin`](https://aur.archlinux.org/packages/keyward-bin) package is
+maintained by the community rather than by this project, so it can lag a release
+behind. It installs the same signed binaries published here.
+
 ### Download a release binary
 
 Copy-paste this to grab the right archive for your OS/arch from the
