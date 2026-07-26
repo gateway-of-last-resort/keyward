@@ -751,6 +751,94 @@ func loadConfig(t *testing.T) (*config.Config, string) {
 	return &c, dir
 }
 
+// Regression: a key whose private half exists but cannot be parsed has no
+// PrivateKeyPath, and the list row, the detail heading and the search index all
+// keyed off that field. The row rendered nameless, the detail screen said "Key:"
+// and nothing else, and Modified printed the zero time. Reported on Windows 26.07.
+func TestKeys_UnparseablePrivateKeyStillNamed(t *testing.T) {
+	k := keys.Key{
+		PublicKeyPath: "/home/u/.ssh/id_junk.pub",
+		Algorithm:     "ssh-ed25519",
+		BitSize:       256,
+		Comment:       "junk@keyward",
+		// PrivateKeyPath and ModifiedAt deliberately left zero.
+	}
+
+	list := newKeyListModel([]keys.Key{k}, nil, "/home/u/.ssh")
+	list.width, list.height = 120, 20
+	if out := list.view(); !strings.Contains(out, "id_junk.pub") {
+		t.Error("list row must fall back to the public path for its name")
+	}
+
+	// Searching by name must find it too, not just by comment or algorithm.
+	list.query = "id_junk"
+	if got := len(list.visible()); got != 1 {
+		t.Errorf("search by public path matched %d rows, want 1", got)
+	}
+
+	detail := newKeyDetailModel(k, nil, nil, false)
+	detail.width, detail.height = 120, 30
+	out := detail.view()
+	// Assert on the heading line alone: the "Public path" field further down also
+	// contains the filename, so a whole-output match would pass even when the
+	// heading is empty.
+	heading := strings.SplitN(out, "\n", 2)[0]
+	if !strings.Contains(heading, "id_junk.pub") {
+		t.Errorf("detail heading must name the key; got %q", heading)
+	}
+	if strings.Contains(out, "0001-01-01") {
+		t.Error("zero modification time must not be printed as a date")
+	}
+}
+
+// Regression: a CRLF config wiped rows off the screen. Comment rows render the
+// token's Raw line (so a commented-out param shows exactly as written), and on
+// a CRLF file that Raw ends in '\r'. Printing it reset the cursor to column 0
+// and overwrote whatever was already on that row — including the host name in
+// the neighbouring pane, since the two panes are joined line by line. Reported
+// on Windows 26.07: the first host's name vanished and the divider jumped.
+func TestConfig_CRLFCommentDoesNotCorruptRender(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	body := "# header comment\r\n\r\nHost insecure\r\n    User root\r\n#    Port 22\r\n\r\nHost fine\r\n    User deploy\r\n"
+	if err := config.WriteAtomic(path, []byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := newConfigModel(&cfg, dir)
+	m.width, m.height = 100, 30
+
+	out := m.view()
+	if strings.ContainsRune(out, '\r') {
+		t.Error("rendered view contains a carriage return; it will corrupt the terminal")
+	}
+	// The name of the block that owns the header comment must survive.
+	if !strings.Contains(out, "insecure") {
+		t.Error("host name missing from the rendered view")
+	}
+
+	// Same check with the cursor parked on the comment row in the params pane,
+	// which takes the other of the two Raw-rendering branches.
+	m.paneRight = true
+	m.paramCursor = 1
+	if out := m.view(); strings.ContainsRune(out, '\r') {
+		t.Error("selected comment row emits a carriage return")
+	}
+
+	// The file itself must be untouched: Raw is sanitized for display only.
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != body {
+		t.Error("rendering must not rewrite the config file")
+	}
+}
+
 // A successful save must clear a saveErr left by an earlier failure, otherwise
 // the "✓ saved" message renders in the error style.
 func TestConfig_SaveClearsPriorError(t *testing.T) {

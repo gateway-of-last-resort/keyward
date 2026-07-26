@@ -487,8 +487,11 @@ func (m keyDetailModel) view() string {
 	k := m.key
 	var sb strings.Builder
 
+	// keyID, not PrivateKeyPath: a key whose private half could not be parsed has
+	// no private path, and heading the screen with "Key:" and nothing after it
+	// leaves the user with no idea which file they opened.
 	title := sectionHeaderStyle.Width(m.width).Render(
-		"Key: " + fitLeft(k.PrivateKeyPath, m.width-10),
+		"Key: " + fitLeft(keyID(k), m.width-10),
 	)
 	sb.WriteString(title + "\n\n")
 
@@ -503,7 +506,13 @@ func (m keyDetailModel) view() string {
 	field("Bit size", fmt.Sprintf("%d", k.BitSize))
 	field("Comment", ifEmpty(k.Comment, "—"))
 	field("Fingerprint", ifEmpty(k.Fingerprint, "—"))
-	field("Modified", k.ModifiedAt.Format("2006-01-02 15:04:05"))
+	// ModifiedAt is only read off a private file that parsed, so an unparseable
+	// one would otherwise print the zero time as "0001-01-01 00:00:00".
+	modified := "—"
+	if !k.ModifiedAt.IsZero() {
+		modified = k.ModifiedAt.Format("2006-01-02 15:04:05")
+	}
+	field("Modified", modified)
 	field("Has passphrase", boolLabel(k.HasPassphrase))
 	field("Public only", boolLabel(k.IsPublicOnly))
 	if !k.IsPublicOnly {
