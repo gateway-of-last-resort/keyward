@@ -44,7 +44,7 @@ func newKeyListModel(ks []keys.Key, results []audit.AuditResult, sshDir string) 
 	for i, k := range ks {
 		// Match on the key's identity (public path for a public-only key), since the
 		// audit records findings under the public path when there is no private key.
-		items[i] = keyListItem{key: k, severity: worst[keyID(k)]}
+		items[i] = keyListItem{key: k, severity: worst[k.IdentityPath()]}
 	}
 	return keyListModel{items: items, sshDir: sshDir}
 }
@@ -167,7 +167,7 @@ func (m keyListModel) visible() []visibleItem {
 	var out []visibleItem
 	for i, item := range m.items {
 		if q == "" ||
-			strings.Contains(strings.ToLower(keyID(item.key)), q) ||
+			strings.Contains(strings.ToLower(item.key.IdentityPath()), q) ||
 			strings.Contains(strings.ToLower(item.key.Comment), q) ||
 			strings.Contains(strings.ToLower(item.key.Algorithm), q) {
 			out = append(out, visibleItem{item, i})
@@ -234,9 +234,9 @@ func (m keyListModel) view() string {
 }
 
 func (m keyListModel) renderRow(item visibleItem, selected bool) string {
-	// keyID falls back to the public path: a key whose private half could not be
-	// parsed has no private path, and the row would render nameless.
-	name := fitLeft(keyID(item.key), colName)
+	// IdentityPath falls back to the public path so the row is never nameless.
+
+	name := fitLeft(item.key.IdentityPath(), colName)
 	algo := pad(item.key.Algorithm, colAlgo)
 	bits := pad("—", colBits)
 	if item.key.BitSize > 0 {

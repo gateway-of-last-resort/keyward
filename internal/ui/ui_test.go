@@ -282,6 +282,115 @@ func TestDeleteKey_PublicOnly(t *testing.T) {
 	}
 }
 
+// writeKeyPair writes <name>.pub with a valid authorized_keys line and, when
+// private is non-nil, <name> with exactly those bytes. Passing junk bytes yields
+// the "private file present but unparseable" state that keys.Parse represents
+// with an empty PrivateKeyPath and a set UnparsedPrivatePath.
+func writeKeyPair(t *testing.T, dir, name string, private []byte) {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".pub"), ssh.MarshalAuthorizedKey(sshPub), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if private != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), private, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestDeleteKey_LeavesNothingOnDisk is the regression test for the reported bug:
+// deleting a key whose private half could not be parsed removed only the .pub and
+// left the private file behind — and because keys.Parse needs the .pub to discover
+// such a file, it then became invisible. Asserting the directory is empty rather
+// than stat-ing individual paths also covers .bak siblings.
+func TestDeleteKey_LeavesNothingOnDisk(t *testing.T) {
+	junk := []byte("JUNK BEFORE HEADER\n-----BEGIN OPENSSH PRIVATE KEY-----\nnot base64\n")
+
+	tests := []struct {
+		name         string
+		private      []byte
+		extraFiles   []string
+		wantUnparsed bool
+	}{
+		{name: "unparseable private half", private: junk, wantUnparsed: true},
+		{
+			name:         "unparseable private half with stale backups",
+			private:      junk,
+			extraFiles:   []string{"id_x.bak", "id_x.pub.bak"},
+			wantUnparsed: true,
+		},
+		{name: "public only", private: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeKeyPair(t, dir, "id_x", tt.private)
+			for _, name := range tt.extraFiles {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("stale\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			ks, err := keys.Parse(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ks) != 1 {
+				t.Fatalf("Parse found %d keys, want 1", len(ks))
+			}
+			// Pin the precondition so the test cannot silently go vacuous if Parse
+			// starts representing this state differently.
+			if tt.wantUnparsed {
+				if ks[0].PrivateKeyPath != "" {
+					t.Fatalf("PrivateKeyPath = %q, want empty", ks[0].PrivateKeyPath)
+				}
+				if ks[0].UnparsedPrivatePath == "" {
+					t.Fatal("UnparsedPrivatePath is empty, want the junk file")
+				}
+			}
+
+			msg := runCmd(deleteKeyCmd(ks[0]))
+			del, ok := msg.(keyDeletedMsg)
+			if !ok {
+				t.Fatalf("got %T (%v), want keyDeletedMsg", msg, msg)
+			}
+			if del.path != ks[0].IdentityPath() {
+				t.Errorf("keyDeletedMsg.path = %q, want %q", del.path, ks[0].IdentityPath())
+			}
+
+			left, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(left) != 0 {
+				var names []string
+				for _, e := range left {
+					names = append(names, e.Name())
+				}
+				t.Errorf("files left behind: %v", names)
+			}
+			// The old bug left a file Parse could not see, so "gone" and "invisible"
+			// must be asserted separately.
+			after, err := keys.Parse(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(after) != 0 {
+				t.Errorf("Parse still finds %d keys", len(after))
+			}
+		})
+	}
+}
+
 // TestKeyDeleted_RemovesCorrectPublicOnly ensures deletion targets the identified
 // key, not the first public-only entry (which all shared an empty private path).
 func TestKeyDeleted_RemovesCorrectPublicOnly(t *testing.T) {
@@ -290,11 +399,118 @@ func TestKeyDeleted_RemovesCorrectPublicOnly(t *testing.T) {
 	m := Model{active: ScreenKeys, keys: []keys.Key{a, b}, sshDir: "/ssh"}
 	m.keyList = newKeyListModel(m.keys, nil, "/ssh")
 
-	next, _ := m.Update(keyDeletedMsg{path: keyID(b)})
+	next, _ := m.Update(keyDeletedMsg{path: b.IdentityPath()})
 	m = next.(Model)
 
-	if len(m.keys) != 1 || keyID(m.keys[0]) != keyID(a) {
+	if len(m.keys) != 1 || m.keys[0].IdentityPath() != a.IdentityPath() {
 		t.Fatalf("wrong key removed; remaining = %+v", m.keys)
+	}
+}
+
+// TestUnparseableKey_AuditFindingsReachTheUI guards the coupling between the
+// audit and the UI: both resolve a key through IdentityPath, and the list looks
+// findings up by that path in a plain map. If the two ever diverge again the
+// lookup silently yields no severity, so the badge assertion is the tripwire.
+func TestUnparseableKey_AuditFindingsReachTheUI(t *testing.T) {
+	dir := t.TempDir()
+	writeKeyPair(t, dir, "id_junk", []byte("JUNK\n-----BEGIN OPENSSH PRIVATE KEY-----\n"))
+
+	ks, err := keys.Parse(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := audit.Run(ks, nil, dir)
+
+	var found bool
+	for _, r := range report.Results {
+		if strings.Contains(r.Message, "not recognized") {
+			found = true
+			if r.KeyPath != ks[0].UnparsedPrivatePath {
+				t.Errorf("finding KeyPath = %q, want the private file %q", r.KeyPath, ks[0].UnparsedPrivatePath)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no \"not recognized\" finding")
+	}
+
+	list := newKeyListModel(ks, report.Results, dir)
+	if list.items[0].severity != audit.Warning {
+		t.Errorf("list severity = %q, want WARNING (findings did not reach the UI)", list.items[0].severity)
+	}
+
+	detail := newKeyDetailModel(ks[0], report.Results, nil, false)
+	if len(detail.findings) == 0 {
+		t.Error("detail screen shows no findings")
+	}
+	detail.width, detail.height = 120, 30
+	out := detail.view()
+	if !strings.Contains(out, "id_junk") || !strings.Contains(out, "not recognized") {
+		t.Error("detail view must name the private file and mark it as not recognized")
+	}
+}
+
+// TestDetail_AgentAndRotateRequireUsablePrivateKey pins the guards on 'A' and 'r'.
+// Both used to run for any key with a fingerprint, which a public-only key has
+// (read off its .pub), so the agent path failed with "open : no such file".
+func TestDetail_AgentAndRotateRequireUsablePrivateKey(t *testing.T) {
+	usable := keys.Key{
+		PrivateKeyPath: "/ssh/id_ok", PublicKeyPath: "/ssh/id_ok.pub",
+		Fingerprint: "SHA256:ok", HasPassphrase: true,
+	}
+	publicOnly := keys.Key{
+		PublicKeyPath: "/ssh/id_pub.pub", IsPublicOnly: true, Fingerprint: "SHA256:pub",
+	}
+	unparsed := keys.Key{
+		UnparsedPrivatePath: "/ssh/id_junk", PublicKeyPath: "/ssh/id_junk.pub",
+		Fingerprint: "SHA256:junk",
+	}
+
+	tests := []struct {
+		name    string
+		key     keys.Key
+		allowed bool
+	}{
+		{name: "usable private key", key: usable, allowed: true},
+		{name: "public only", key: publicOnly},
+		{name: "unparseable private half", key: unparsed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newKeyDetailModel(tt.key, nil, nil, false)
+
+			agent, cmd := m.update(k("A"))
+			if got := agent.addingAgent || cmd != nil; got != tt.allowed {
+				t.Errorf("A: acted = %v, want %v", got, tt.allowed)
+			}
+
+			rot, _ := m.update(k("r"))
+			if rot.confirmRotate != tt.allowed {
+				t.Errorf("r: confirmRotate = %v, want %v", rot.confirmRotate, tt.allowed)
+			}
+		})
+	}
+}
+
+// TestKeyMetaUpdated_MatchesByIdentity: the handler used to find the edited key by
+// raw PrivateKeyPath, so two keys without one both matched the first entry and the
+// detail screen was rebuilt from the wrong key.
+func TestKeyMetaUpdated_MatchesByIdentity(t *testing.T) {
+	first := keys.Key{PublicKeyPath: "/ssh/a.pub", IsPublicOnly: true, Fingerprint: "SHA256:a"}
+	second := keys.Key{
+		UnparsedPrivatePath: "/ssh/b", PublicKeyPath: "/ssh/b.pub", Fingerprint: "SHA256:b",
+	}
+
+	st := storage.Store{Keys: map[string]storage.KeyMetadata{}}
+	m := Model{active: ScreenDetail, keys: []keys.Key{first, second}, store: &st, sshDir: "/ssh"}
+	m.keyDetail = newKeyDetailModel(first, nil, nil, false)
+
+	next, _ := m.Update(keyMetaUpdatedMsg{key: second, tags: []string{"work"}, note: "n"})
+	m = next.(Model)
+
+	if got := m.keyDetail.key.IdentityPath(); got != second.IdentityPath() {
+		t.Errorf("detail rebuilt from %q, want %q", got, second.IdentityPath())
 	}
 }
 
@@ -751,43 +967,68 @@ func loadConfig(t *testing.T) (*config.Config, string) {
 	return &c, dir
 }
 
-// Regression: a key whose private half exists but cannot be parsed has no
-// PrivateKeyPath, and the list row, the detail heading and the search index all
-// keyed off that field. The row rendered nameless, the detail screen said "Key:"
-// and nothing else, and Modified printed the zero time. Reported on Windows 26.07.
-func TestKeys_UnparseablePrivateKeyStillNamed(t *testing.T) {
-	k := keys.Key{
-		PublicKeyPath: "/home/u/.ssh/id_junk.pub",
-		Algorithm:     "ssh-ed25519",
-		BitSize:       256,
-		Comment:       "junk@keyward",
-		// PrivateKeyPath and ModifiedAt deliberately left zero.
+// Regression: a key with no usable private key has no PrivateKeyPath, and the
+// list row, the detail heading and the search index all keyed off that field. The
+// row rendered nameless, the detail screen said "Key:" and nothing else, and
+// Modified printed the zero time. Reported on Windows 26.07.
+func TestKeys_KeysWithoutUsablePrivateKeyAreNamed(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      keys.Key
+		wantName string
+	}{
+		{
+			// Identity is the private file: that is the one the user has to fix.
+			name: "unparseable private half",
+			key: keys.Key{
+				UnparsedPrivatePath: "/home/u/.ssh/id_junk",
+				PublicKeyPath:       "/home/u/.ssh/id_junk.pub",
+				Algorithm:           "ssh-ed25519",
+				BitSize:             256,
+				Comment:             "junk@keyward",
+			},
+			wantName: "/home/u/.ssh/id_junk",
+		},
+		{
+			name: "public only",
+			key: keys.Key{
+				PublicKeyPath: "/home/u/.ssh/id_orphan.pub",
+				IsPublicOnly:  true,
+				Algorithm:     "ssh-ed25519",
+				BitSize:       256,
+			},
+			wantName: "/home/u/.ssh/id_orphan.pub",
+		},
 	}
 
-	list := newKeyListModel([]keys.Key{k}, nil, "/home/u/.ssh")
-	list.width, list.height = 120, 20
-	if out := list.view(); !strings.Contains(out, "id_junk.pub") {
-		t.Error("list row must fall back to the public path for its name")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			list := newKeyListModel([]keys.Key{tt.key}, nil, "/home/u/.ssh")
+			list.width, list.height = 120, 20
+			if out := list.view(); !strings.Contains(out, tt.wantName) {
+				t.Errorf("list row must be named %q", tt.wantName)
+			}
 
-	// Searching by name must find it too, not just by comment or algorithm.
-	list.query = "id_junk"
-	if got := len(list.visible()); got != 1 {
-		t.Errorf("search by public path matched %d rows, want 1", got)
-	}
+			// Searching by name must find it too, not just by comment or algorithm.
+			list.query = filepath.Base(tt.wantName)
+			if got := len(list.visible()); got != 1 {
+				t.Errorf("search by name matched %d rows, want 1", got)
+			}
 
-	detail := newKeyDetailModel(k, nil, nil, false)
-	detail.width, detail.height = 120, 30
-	out := detail.view()
-	// Assert on the heading line alone: the "Public path" field further down also
-	// contains the filename, so a whole-output match would pass even when the
-	// heading is empty.
-	heading := strings.SplitN(out, "\n", 2)[0]
-	if !strings.Contains(heading, "id_junk.pub") {
-		t.Errorf("detail heading must name the key; got %q", heading)
-	}
-	if strings.Contains(out, "0001-01-01") {
-		t.Error("zero modification time must not be printed as a date")
+			detail := newKeyDetailModel(tt.key, nil, nil, false)
+			detail.width, detail.height = 120, 30
+			out := detail.view()
+			// Assert on the heading line alone: the path fields further down also
+			// contain the filename, so a whole-output match would pass even when the
+			// heading is empty.
+			heading := strings.SplitN(out, "\n", 2)[0]
+			if !strings.Contains(heading, tt.wantName) {
+				t.Errorf("detail heading must name the key; got %q", heading)
+			}
+			if strings.Contains(out, "0001-01-01") {
+				t.Error("zero modification time must not be printed as a date")
+			}
+		})
 	}
 }
 

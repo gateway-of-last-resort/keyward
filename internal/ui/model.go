@@ -436,9 +436,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					LinkedHosts: []string{},
 				})
 			}
-			// refresh detail with updated metadata
+			// refresh detail with updated metadata; match on identity, since keys
+			// without a usable private path would all compare equal on that field
 			for _, k := range m.keys {
-				if k.PrivateKeyPath == msg.key.PrivateKeyPath {
+				if k.IdentityPath() == msg.key.IdentityPath() {
 					m.keyDetail = newKeyDetailModel(k, m.report.Results, m.store, m.agentLoaded[k.Fingerprint])
 					break
 				}
@@ -450,7 +451,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case keyDeletedMsg:
 		for i, k := range m.keys {
-			if keyID(k) == msg.path {
+			if k.IdentityPath() == msg.path {
 				if m.store != nil && k.Fingerprint != "" {
 					_ = storage.Delete(m.store, k.Fingerprint)
 				}
