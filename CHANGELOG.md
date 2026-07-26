@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-26
+
+Fixes found by testing the 1.0.1 build on Windows. Three of them were never
+Windows-specific and applied to every platform.
+
+### Fixed
+
+- **A private file that cannot be recognized is no longer left behind on delete.**
+  Such a file (junk or a BOM ahead of `-----BEGIN`, or one Keyward cannot read) is
+  now tracked, so deleting the key removes it along with the public half. Before,
+  only the `.pub` was removed, and since that is what made the pair discoverable,
+  the private file then became invisible to Keyward while still sitting on disk.
+- **Keys with no usable private key are named** in the key list, the detail
+  heading and the search index. They used to render with an empty name, and the
+  detail screen showed an empty modification date. The key is now identified by
+  its private file where one exists, which also means a key referenced by
+  `IdentityFile` is no longer falsely reported as linked to no host.
+- **Add-to-agent and rotate refuse a key without a usable private key** instead of
+  failing afterwards. Both only checked for a fingerprint, which a public-only key
+  has, so `A` reported `open : no such file or directory` and `r` opened a form
+  that could only end in an error.
+- **Editing a line in a CRLF config keeps the file's line endings.** The rewritten
+  line was always written with a bare `\n`, which left a CRLF file mixed. Lines
+  that are not edited were already preserved byte-for-byte.
+- **Comments render without corrupting the screen.** On a CRLF config the carriage
+  return reached the terminal, moving the cursor to the start of the line and
+  wiping the row already drawn there, including the host name in the neighbouring
+  pane. Control characters are now stripped for display only; the file is untouched.
+- **`keyward version` reports the version for `go install` builds.** The version
+  was injected only at release time, so anyone installing with `go install` saw
+  `dev`. It is now read from the module version the toolchain embeds. Builds from a
+  working tree still report `dev`.
+- **The audit no longer emits a pathless finding** for a key whose private half
+  cannot be parsed. It reported the same file twice, once without a path.
+- **The key list order is stable between runs.** Keys without a usable private
+  path all compared equal while sorting, so their order followed map iteration.
+
 ## [1.0.1] - 2026-07-17
 
 Config-editor fixes found while testing the 1.0.0 build on Linux.
@@ -320,6 +357,7 @@ Initial public release.
 - `--version` and `--help` flags.
 
 [Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.1...HEAD
+[1.0.2]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.8.0...v0.9.0
