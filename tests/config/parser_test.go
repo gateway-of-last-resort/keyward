@@ -245,6 +245,61 @@ Host pi4
 	}
 }
 
+// TestSerialize_EditedLineKeepsFileEOL pins that editing one parameter does not
+// convert its line ending. Unchanged lines keep their own bytes, so only the
+// rewritten line was at risk.
+//
+// Regression: an edited line was always written with a bare '\n', so saving a
+// CRLF config turned that one line into LF and left the file mixed. Found on
+// Windows 26.07 by counting CRLFs before and after a save (19 -> 18).
+func TestSerialize_EditedLineKeepsFileEOL(t *testing.T) {
+	countEOL := func(b []byte) (lf, crlf int) {
+		crlf = bytes.Count(b, []byte("\r\n"))
+		return bytes.Count(b, []byte("\n")) - crlf, crlf
+	}
+
+	tests := []struct {
+		name string
+		eol  string
+	}{
+		{"crlf file", "\r\n"},
+		{"lf file", "\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := strings.ReplaceAll(
+				"Host insecure\n    User root\n    StrictHostKeyChecking no\n",
+				"\n", tt.eol)
+			c := cfgBytes(t, raw)
+
+			beforeLF, beforeCRLF := countEOL([]byte(raw))
+			if got := config.Serialize(&c); !bytes.Equal(got, []byte(raw)) {
+				t.Fatalf("untouched config changed:\ngot:  %q\nwant: %q", got, raw)
+			}
+
+			blk := config.FindBlock(&c, "insecure")
+			if blk == nil {
+				t.Fatal("block not found")
+			}
+			if !config.SetParam(blk, "StrictHostKeyChecking", []string{"yes"}) {
+				t.Fatal("SetParam failed")
+			}
+
+			out := config.Serialize(&c)
+			if !strings.Contains(string(out), "StrictHostKeyChecking yes") {
+				t.Fatalf("edit not applied:\n%q", out)
+			}
+
+			afterLF, afterCRLF := countEOL(out)
+			if afterLF != beforeLF || afterCRLF != beforeCRLF {
+				t.Errorf("line endings changed: LF %d->%d, CRLF %d->%d\n%q",
+					beforeLF, afterLF, beforeCRLF, afterCRLF, out)
+			}
+		})
+	}
+}
+
 // TestParseBytes_OnlyComments is an edge case: a valid config with no Host blocks.
 func TestParseBytes_OnlyComments(t *testing.T) {
 	raw := `# This file is intentionally empty

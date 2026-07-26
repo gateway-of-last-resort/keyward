@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,39 +11,64 @@ import (
 	"time"
 )
 
+// dominantEOL reports which line ending the file uses, for lines that have to be
+// re-rendered because they were edited or newly added.
+//
+// Unchanged lines keep their own bytes (their '\r' lives inside Raw), so this
+// only decides what a rewritten line looks like. Without it, editing a single
+// parameter in a CRLF file wrote that one line with a bare '\n' and left the
+// file mixed, which was reported on Windows 26.07.
+func dominantEOL(original []byte) string {
+	crlf := bytes.Count(original, []byte("\r\n"))
+	lf := bytes.Count(original, []byte("\n")) - crlf
+	if crlf > lf {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+// renderToken returns the text of one line, without its ending, plus the ending
+// that must follow it. An unchanged token reproduces its original bytes exactly
+// (Raw already holds any '\r'), so it is only ever separated by '\n'.
+func renderToken(t Token, inBlock bool, eol string) (text, ending string) {
+	if t.Raw != "" {
+		return t.Raw, "\n"
+	}
+	if inBlock && t.Type == PARAM {
+		return "    " + t.Key + t.Sep + t.Value, eol
+	}
+	return t.Key + t.Sep + t.Value, eol
+}
+
 // Serialize renders the config back to bytes, preserving original raw lines where unchanged.
 func Serialize(c *Config) []byte {
-	var sb = strings.Builder{}
+	eol := dominantEOL(c.Original)
 
-	// Always join with '\n'; each unchanged token's Raw already carries its own
-	// trailing '\r' where the original line was CRLF, so mixed and CRLF files
-	// round-trip byte-for-byte instead of being force-converted to one style.
-	newline := "\n"
+	type line struct{ text, ending string }
+	lines := make([]line, 0, len(c.Global.Tokens))
 
 	for _, token := range c.Global.Tokens {
-		if token.Raw != "" {
-			sb.WriteString(token.Raw)
-		} else {
-			sb.WriteString(token.Key + token.Sep + token.Value)
-		}
-		sb.WriteString(newline)
+		text, ending := renderToken(token, false, eol)
+		lines = append(lines, line{text, ending})
 	}
-
 	for _, block := range c.Blocks {
 		for _, token := range block.Tokens {
-			if token.Raw != "" {
-				sb.WriteString(token.Raw)
-			} else {
-				if token.Type == PARAM {
-					sb.WriteString("    " + token.Key + token.Sep + token.Value)
-				} else {
-					sb.WriteString(token.Key + token.Sep + token.Value)
-				}
-			}
-			sb.WriteString(newline)
+			text, ending := renderToken(token, true, eol)
+			lines = append(lines, line{text, ending})
 		}
 	}
-	return []byte(strings.TrimSuffix(sb.String(), newline))
+
+	// The token list already carries the file's trailing newline as a final empty
+	// token, so the last line's ending is dropped rather than trimmed off the
+	// finished string: trimming cannot tell a content '\r' from a CRLF ending.
+	var sb strings.Builder
+	for i, l := range lines {
+		sb.WriteString(l.text)
+		if i < len(lines)-1 {
+			sb.WriteString(l.ending)
+		}
+	}
+	return []byte(sb.String())
 }
 
 // WriteAtomic writes data to path via a temp file + rename, then sets permissions to 0600.
