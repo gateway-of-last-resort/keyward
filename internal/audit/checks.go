@@ -40,14 +40,6 @@ func checkPlatformPermissionModel() []AuditResult {
 	}}
 }
 
-func resolveKeyPath(key keys.Key) string {
-	keyPath := key.PrivateKeyPath
-	if keyPath == "" {
-		keyPath = key.PublicKeyPath
-	}
-	return keyPath
-}
-
 func expandPath(path string) string {
 	if strings.HasPrefix(path, "~/") {
 		home, err := os.UserHomeDir()
@@ -72,7 +64,7 @@ func checkPassphrase(key keys.Key) []AuditResult {
 	// stay silent — surface it.
 	if key.PrivateKeyPath == "" {
 		return append(results, AuditResult{
-			KeyPath:  resolveKeyPath(key),
+			KeyPath:  key.IdentityPath(),
 			Severity: Warning,
 			Category: CategoryKey,
 			Message:  "Private key present but not recognized",
@@ -125,7 +117,7 @@ func checkAlgorithm(key keys.Key) []AuditResult {
 
 	if key.Algorithm != "" {
 		if key.Algorithm == "ssh-dss" {
-			keyPath := resolveKeyPath(key)
+			keyPath := key.IdentityPath()
 			results = append(results, AuditResult{
 				KeyPath:  keyPath,
 				Severity: Critical,
@@ -141,7 +133,7 @@ func checkAlgorithm(key keys.Key) []AuditResult {
 
 func checkBitSize(key keys.Key) []AuditResult {
 	var results []AuditResult
-	keyPath := resolveKeyPath(key)
+	keyPath := key.IdentityPath()
 
 	if key.Algorithm == "ssh-rsa" {
 		switch {
@@ -187,11 +179,7 @@ func checkPermissions(key keys.Key) []AuditResult {
 	var results []AuditResult
 
 	if !key.IsPublicOnly {
-		// A private file that exists but could not be parsed (junk or a BOM
-		// before -----BEGIN) leaves PrivateKeyPath empty while IsPublicOnly
-		// stays false. checkKeyValidity already reports that as "not
-		// recognized", so stat("") here would only add a second finding for the
-		// same file, and a pathless one at that.
+		// An unparsed private file is already reported by checkPassphrase.
 		if key.PrivateKeyPath == "" {
 			return results
 		}
@@ -224,7 +212,7 @@ func checkPermissions(key keys.Key) []AuditResult {
 
 func checkAge(key keys.Key) []AuditResult {
 	var results []AuditResult
-	keyPath := resolveKeyPath(key)
+	keyPath := key.IdentityPath()
 
 	if !key.ModifiedAt.IsZero() {
 		if time.Since(key.ModifiedAt) > maxKeyAge {
@@ -305,7 +293,7 @@ func newCheckKeyLinkedToHost(allKeys []keys.Key) ConfigCheck {
 		var results []AuditResult
 		for _, key := range allKeys {
 			if !key.IsPublicOnly {
-				path := resolveKeyPath(key)
+				path := key.IdentityPath()
 				if !linkedPaths[path] {
 					results = append(results, AuditResult{
 						KeyPath:  path,

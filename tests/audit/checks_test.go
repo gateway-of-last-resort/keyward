@@ -81,6 +81,65 @@ func TestCheckPermissions_UnparseablePrivateKey(t *testing.T) {
 	}
 }
 
+// TestCheckKeyLinkedToHost_UnparseablePrivate pins a behaviour change that came
+// with filing findings under the private file: IdentityFile names the private
+// key, so a key whose private half is unparseable can now be matched to a host.
+// Before, it was resolved to its .pub and therefore always reported unlinked.
+func TestCheckKeyLinkedToHost_UnparseablePrivate(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        string
+		wantLinked bool
+	}{
+		{
+			name:       "referenced by IdentityFile",
+			cfg:        "Host h\n    IdentityFile %s\n",
+			wantLinked: true,
+		},
+		{
+			name: "not referenced",
+			cfg:  "Host h\n    HostName example.com\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			priv := filepath.Join(dir, "id_junk")
+			if err := os.WriteFile(priv, []byte("JUNK\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			pub, _, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sshPub, err := ssh.NewPublicKey(pub)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(priv+".pub", ssh.MarshalAuthorizedKey(sshPub), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			ks, err := keys.Parse(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ks[0].UnparsedPrivatePath == "" {
+				t.Fatal("fixture did not produce an unparseable private half")
+			}
+
+			c := config.ParseBytes("config", []byte(strings.Replace(tt.cfg, "%s", priv, 1)))
+			results := audit.Run(ks, &c, dir).Results
+
+			_, unlinked := hasMessage(results, "key not linked to any host")
+			if unlinked == tt.wantLinked {
+				t.Errorf("unlinked finding present = %v, want %v", unlinked, !tt.wantLinked)
+			}
+		})
+	}
+}
+
 func TestCheckForwardAgent(t *testing.T) {
 	dir := t.TempDir()
 

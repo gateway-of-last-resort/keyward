@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -99,7 +100,153 @@ func writeFile(t *testing.T, path string, data []byte, mode os.FileMode) {
 	}
 }
 
+// writeUnparseablePrivate writes a valid <name>.pub plus a <name> holding data
+// that is not a usable private key, so Parse still discovers the pair but cannot
+// read the private half.
+func writeUnparseablePrivate(t *testing.T, dir, name string, private []byte) {
+	t.Helper()
+	writePubOnly(t, dir, name)
+	writeFile(t, filepath.Join(dir, name), private, 0600)
+}
+
 // ── tests ───────────────────────────────────────────────────────────────────
+
+// TestParse_PrivateHalfStates pins the three states a key's private half can be
+// in, and the invariant that PrivateKeyPath and UnparsedPrivatePath are mutually
+// exclusive: a set PrivateKeyPath always means a usable private key.
+func TestParse_PrivateHalfStates(t *testing.T) {
+	pemHeader := "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+
+	tests := []struct {
+		name         string
+		write        func(t *testing.T, dir string)
+		wantPrivate  bool // PrivateKeyPath is set
+		wantUnparsed bool // UnparsedPrivatePath is set
+		wantPubOnly  bool
+	}{
+		{
+			name:        "usable pair",
+			write:       func(t *testing.T, dir string) { writeEd25519Pair(t, dir, "id_k", "c", nil) },
+			wantPrivate: true,
+		},
+		{
+			name:        "public only",
+			write:       func(t *testing.T, dir string) { writePubOnly(t, dir, "id_k") },
+			wantPubOnly: true,
+		},
+		{
+			name: "junk before header",
+			write: func(t *testing.T, dir string) {
+				writeUnparseablePrivate(t, dir, "id_k", []byte("JUNK\n"+pemHeader))
+			},
+			wantUnparsed: true,
+		},
+		{
+			name: "utf-8 bom before header",
+			write: func(t *testing.T, dir string) {
+				writeUnparseablePrivate(t, dir, "id_k", append([]byte{0xEF, 0xBB, 0xBF}, pemHeader...))
+			},
+			wantUnparsed: true,
+		},
+		{
+			name: "empty private file",
+			write: func(t *testing.T, dir string) {
+				writeUnparseablePrivate(t, dir, "id_k", nil)
+			},
+			wantUnparsed: true,
+		},
+		{
+			name: "unreadable private file",
+			write: func(t *testing.T, dir string) {
+				if runtime.GOOS == "windows" {
+					t.Skip("permission bits are synthesized on Windows")
+				}
+				if os.Geteuid() == 0 {
+					t.Skip("root ignores the read bit")
+				}
+				writeUnparseablePrivate(t, dir, "id_k", []byte(pemHeader))
+				if err := os.Chmod(filepath.Join(dir, "id_k"), 0000); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantUnparsed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.write(t, dir)
+
+			got, err := keys.Parse(dir)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("Parse found %d keys, want 1", len(got))
+			}
+			k := got[0]
+
+			if (k.PrivateKeyPath != "") != tt.wantPrivate {
+				t.Errorf("PrivateKeyPath = %q, want set: %v", k.PrivateKeyPath, tt.wantPrivate)
+			}
+			if (k.UnparsedPrivatePath != "") != tt.wantUnparsed {
+				t.Errorf("UnparsedPrivatePath = %q, want set: %v", k.UnparsedPrivatePath, tt.wantUnparsed)
+			}
+			if k.PrivateKeyPath != "" && k.UnparsedPrivatePath != "" {
+				t.Error("both private path fields set; they must be mutually exclusive")
+			}
+			if k.IsPublicOnly != tt.wantPubOnly {
+				t.Errorf("IsPublicOnly = %v, want %v", k.IsPublicOnly, tt.wantPubOnly)
+			}
+			if k.PublicKeyPath == "" {
+				t.Error("PublicKeyPath is empty; the pair should have been discovered via the .pub")
+			}
+
+			wantIdentity := filepath.Join(dir, "id_k")
+			if tt.wantPubOnly {
+				wantIdentity += ".pub"
+			}
+			if k.IdentityPath() != wantIdentity {
+				t.Errorf("IdentityPath() = %q, want %q", k.IdentityPath(), wantIdentity)
+			}
+		})
+	}
+}
+
+// TestParse_OrderIsDeterministic guards the sort key: keys without a usable
+// private path used to compare equal, so their order followed Go's map iteration
+// and varied between runs.
+func TestParse_OrderIsDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	writePubOnly(t, dir, "id_a")
+	writePubOnly(t, dir, "id_b")
+	writePubOnly(t, dir, "id_c")
+	writeUnparseablePrivate(t, dir, "id_d", []byte("JUNK\n"))
+	writeEd25519Pair(t, dir, "id_e", "c", nil)
+
+	var first []string
+	for i := range 5 {
+		got, err := keys.Parse(dir)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		paths := make([]string, len(got))
+		for j, k := range got {
+			paths[j] = k.IdentityPath()
+		}
+		if i == 0 {
+			first = paths
+			if !slices.IsSorted(paths) {
+				t.Errorf("Parse order is not ascending: %v", paths)
+			}
+			continue
+		}
+		if !slices.Equal(paths, first) {
+			t.Fatalf("run %d order = %v, want %v", i, paths, first)
+		}
+	}
+}
 
 func TestParse_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
