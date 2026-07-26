@@ -187,6 +187,15 @@ func checkPermissions(key keys.Key) []AuditResult {
 	var results []AuditResult
 
 	if !key.IsPublicOnly {
+		// A private file that exists but could not be parsed (junk or a BOM
+		// before -----BEGIN) leaves PrivateKeyPath empty while IsPublicOnly
+		// stays false. checkKeyValidity already reports that as "not
+		// recognized", so stat("") here would only add a second finding for the
+		// same file, and a pathless one at that.
+		if key.PrivateKeyPath == "" {
+			return results
+		}
+
 		if stat, err := os.Stat(key.PrivateKeyPath); err != nil {
 			results = append(results, AuditResult{
 				KeyPath:  key.PrivateKeyPath,

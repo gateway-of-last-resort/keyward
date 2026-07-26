@@ -1,14 +1,19 @@
 package audit_test
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/gateway-of-last-resort/keyward/internal/audit"
 	"github.com/gateway-of-last-resort/keyward/internal/config"
+	"github.com/gateway-of-last-resort/keyward/internal/keys"
 )
 
 // runConfigAudit runs the audit against a parsed config (no keys) rooted at
@@ -26,6 +31,54 @@ func hasMessage(results []audit.AuditResult, substr string) (audit.Severity, boo
 		}
 	}
 	return "", false
+}
+
+// TestCheckPermissions_UnparseablePrivateKey pins that a private file which is
+// present but cannot be parsed yields exactly one finding, and that the finding
+// carries a path.
+//
+// Regression: keys.Parse leaves PrivateKeyPath empty for such a file while
+// IsPublicOnly stays false (the file does exist), so checkPermissions used to
+// call os.Stat("") and append a second "Private key does not exist or damaged"
+// warning with no KeyPath, which the CLI rendered as a bare "key:".
+func TestCheckPermissions_UnparseablePrivateKey(t *testing.T) {
+	dir := t.TempDir()
+
+	// A valid .pub so the pair is discovered at all, plus a private half with
+	// junk ahead of the PEM header so it cannot be parsed.
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "id_junk.pub"), ssh.MarshalAuthorizedKey(sshPub), 0600); err != nil {
+		t.Fatal(err)
+	}
+	junk := "JUNK BEFORE HEADER\n-----BEGIN OPENSSH PRIVATE KEY-----\nnot base64\n"
+	if err := os.WriteFile(filepath.Join(dir, "id_junk"), []byte(junk), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	ks, err := keys.Parse(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := audit.Run(ks, nil, dir).Results
+
+	if _, found := hasMessage(results, "not recognized"); !found {
+		t.Error("want the unparseable private key reported as not recognized")
+	}
+	if _, found := hasMessage(results, "Private key does not exist or damaged"); found {
+		t.Error("unparseable private key must not also be reported as missing or damaged")
+	}
+	for _, r := range results {
+		if r.Category == audit.CategoryKey && r.KeyPath == "" {
+			t.Errorf("key finding has no KeyPath: %q", r.Message)
+		}
+	}
 }
 
 func TestCheckForwardAgent(t *testing.T) {
