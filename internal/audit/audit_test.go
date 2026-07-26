@@ -140,15 +140,65 @@ func TestCheckPassphrase_PublicOnly_NoFinding(t *testing.T) {
 // the PEM header) must not be silently skipped.
 func TestCheckPassphrase_UnrecognizedPrivate_Warning(t *testing.T) {
 	k := baseKey(t)
-	k.PrivateKeyPath = ""  // parse couldn't recognize the private half
-	k.IsPublicOnly = false // but it's not a public-only key
+	k.UnparsedPrivatePath = k.PrivateKeyPath // the file Parse saw but could not read
+	k.PrivateKeyPath = ""                    // parse couldn't recognize the private half
+	k.IsPublicOnly = false                   // but it's not a public-only key
 
 	results := checkPassphrase(k)
 
 	if !hasSeverity(results, Warning) {
 		t.Error("unrecognized private key should produce a Warning, not silence")
 	}
+	// The user has to fix the private file, so that is the path worth naming.
+	for _, r := range results {
+		if r.KeyPath != k.UnparsedPrivatePath {
+			t.Errorf("KeyPath = %q, want the private file %q", r.KeyPath, k.UnparsedPrivatePath)
+		}
+	}
 	allHaveFix(t, results)
+}
+
+// TestKeyFindings_UseIdentityPath turns an invariant that was spread across five
+// checks into one property: every key finding is filed under IdentityPath, which
+// is how the UI looks findings up.
+func TestKeyFindings_UseIdentityPath(t *testing.T) {
+	usable := baseKey(t)
+
+	publicOnly := baseKey(t)
+	publicOnly.PrivateKeyPath = ""
+	publicOnly.IsPublicOnly = true
+
+	unparsed := baseKey(t)
+	unparsed.UnparsedPrivatePath = unparsed.PrivateKeyPath
+	unparsed.PrivateKeyPath = ""
+
+	// Shapes that make the algorithm, bit-size and age checks fire.
+	weak := func(k keys.Key) keys.Key {
+		k.Algorithm = "ssh-rsa"
+		k.BitSize = 1024
+		k.ModifiedAt = time.Now().Add(-2 * maxKeyAge)
+		return k
+	}
+
+	checks := map[string]KeyCheck{
+		"passphrase":  checkPassphrase,
+		"algorithm":   checkAlgorithm,
+		"bitSize":     checkBitSize,
+		"permissions": checkPermissions,
+		"age":         checkAge,
+	}
+
+	for _, k := range []keys.Key{usable, publicOnly, unparsed} {
+		for name, check := range checks {
+			t.Run(name, func(t *testing.T) {
+				for _, r := range check(weak(k)) {
+					if r.KeyPath != k.IdentityPath() {
+						t.Errorf("%q filed under %q, want %q", r.Message, r.KeyPath, k.IdentityPath())
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestCheckPassphrase_MissingFile_Warning(t *testing.T) {

@@ -789,9 +789,9 @@ func (m configModel) renderParams(width int) string {
 			// A comment row holds the cursor like any other — 't' toggles it back
 			// into a live param — so it needs the same bar + fill. Without this the
 			// cursor disappeared whenever it stepped onto a commented-out line.
-			row = selAccentStyle.Render("▎") + activeParamStyle.Width(width-1).Render(fitRight(t.Raw, width-1))
+			row = selAccentStyle.Render("▎") + activeParamStyle.Width(width-1).Render(fitRight(safeDisplay(t.Raw), width-1))
 		case t.Type == config.COMMENT:
-			row = fmt.Sprintf(" %s", commentedStyle.Render(fitRight(t.Raw, width-1)))
+			row = fmt.Sprintf(" %s", commentedStyle.Render(fitRight(safeDisplay(t.Raw), width-1)))
 		case focused && isCursor && !m.addingParam:
 			// Selected while the Params pane is focused: bar + bright fill. The
 			// bar shows only while Params is the active column — when focus is on

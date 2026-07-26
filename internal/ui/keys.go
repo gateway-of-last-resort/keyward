@@ -44,7 +44,7 @@ func newKeyListModel(ks []keys.Key, results []audit.AuditResult, sshDir string) 
 	for i, k := range ks {
 		// Match on the key's identity (public path for a public-only key), since the
 		// audit records findings under the public path when there is no private key.
-		items[i] = keyListItem{key: k, severity: worst[keyID(k)]}
+		items[i] = keyListItem{key: k, severity: worst[k.IdentityPath()]}
 	}
 	return keyListModel{items: items, sshDir: sshDir}
 }
@@ -167,7 +167,7 @@ func (m keyListModel) visible() []visibleItem {
 	var out []visibleItem
 	for i, item := range m.items {
 		if q == "" ||
-			strings.Contains(strings.ToLower(item.key.PrivateKeyPath), q) ||
+			strings.Contains(strings.ToLower(item.key.IdentityPath()), q) ||
 			strings.Contains(strings.ToLower(item.key.Comment), q) ||
 			strings.Contains(strings.ToLower(item.key.Algorithm), q) {
 			out = append(out, visibleItem{item, i})
@@ -234,7 +234,9 @@ func (m keyListModel) view() string {
 }
 
 func (m keyListModel) renderRow(item visibleItem, selected bool) string {
-	name := fitLeft(item.key.PrivateKeyPath, colName)
+	// IdentityPath falls back to the public path so the row is never nameless.
+
+	name := fitLeft(item.key.IdentityPath(), colName)
 	algo := pad(item.key.Algorithm, colAlgo)
 	bits := pad("—", colBits)
 	if item.key.BitSize > 0 {
@@ -276,6 +278,34 @@ func fitLeft(s string, n int) string {
 		return s
 	}
 	return "…" + string(runes[len(runes)-(n-1):])
+}
+
+// safeDisplay strips control characters from a string that came straight off
+// disk, so it can be rendered without corrupting the screen.
+//
+// Config tokens keep their raw line byte-for-byte so the file round-trips
+// exactly, which means a CRLF file carries a trailing '\r'. Printing that resets
+// the cursor to column 0 and overwrites the row already drawn there — and since
+// the panes are joined line by line, the damage spills into the neighbouring
+// pane. An escape sequence in a comment would be worse, so the whole control
+// range goes. Tabs become one space rather than vanishing, so words in a comment
+// do not glue together.
+func safeDisplay(s string) string {
+	needsWork := strings.ContainsFunc(s, func(r rune) bool {
+		return r < 0x20 || r == 0x7f
+	})
+	if !needsWork {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t':
+			return ' '
+		case r < 0x20 || r == 0x7f:
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // fitRight shortens s to n runes, appending "…" if truncated (keeps the head).

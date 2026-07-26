@@ -18,18 +18,45 @@ import (
 )
 
 // Key represents a parsed SSH key pair (or public-only key) found on disk.
+//
+// PrivateKeyPath and UnparsedPrivatePath are mutually exclusive: when a private
+// file exists, exactly one of them is set, and both are empty for a public-only
+// key. So PrivateKeyPath is empty unless there is a usable private key, and code
+// that needs the file regardless of whether it parsed should use PrivateFilePath.
 type Key struct {
 	PrivateKeyPath string
-	PublicKeyPath  string
-	HasPassphrase  bool
-	IsPublicOnly   bool
-	PrivatePerm    os.FileMode
-	PublicPerm     os.FileMode
-	Algorithm      string
-	ModifiedAt     time.Time
-	Fingerprint    string
-	BitSize        int
-	Comment        string
+	// UnparsedPrivatePath is a private file that exists but could not be read or
+	// recognised as PEM (junk or a BOM ahead of -----BEGIN, bad permissions).
+	UnparsedPrivatePath string
+	PublicKeyPath       string
+	HasPassphrase       bool
+	IsPublicOnly        bool
+	PrivatePerm         os.FileMode
+	PublicPerm          os.FileMode
+	Algorithm           string
+	ModifiedAt          time.Time
+	Fingerprint         string
+	BitSize             int
+	Comment             string
+}
+
+// PrivateFilePath returns the private file backing this key whether or not it
+// parsed, or "" for a public-only key.
+func (k Key) PrivateFilePath() string {
+	if k.PrivateKeyPath != "" {
+		return k.PrivateKeyPath
+	}
+	return k.UnparsedPrivatePath
+}
+
+// IdentityPath returns the path that identifies this key: its private file,
+// falling back to the public one. Audit findings and the UI both key off this, so
+// they must resolve a key the same way.
+func (k Key) IdentityPath() string {
+	if p := k.PrivateFilePath(); p != "" {
+		return p
+	}
+	return k.PublicKeyPath
 }
 
 type keyPairs struct {
@@ -37,7 +64,7 @@ type keyPairs struct {
 	publicPath  string
 }
 
-// Parse scans path for SSH key pairs and returns all recognised keys sorted by PrivateKeyPath.
+// Parse scans path for SSH key pairs and returns all recognised keys sorted by IdentityPath.
 func Parse(path string) ([]Key, error) {
 
 	entries, err := os.ReadDir(path)
@@ -122,6 +149,11 @@ func Parse(path string) ([]Key, error) {
 						parsedPublicKey = signer.PublicKey()
 					}
 				}
+			} else {
+				// The file is there but unusable. Record it so delete can remove it
+				// and the audit can name it; leave PrivatePerm and ModifiedAt zero so
+				// the permission and age checks keep skipping it.
+				temp.UnparsedPrivatePath = pair.privatePath
 			}
 		} else {
 			temp.IsPublicOnly = true
@@ -174,8 +206,11 @@ func Parse(path string) ([]Key, error) {
 
 	}
 
+	// Sort on IdentityPath, not PrivateKeyPath: the latter is empty for public-only
+	// and unparsed keys, so they all compared equal and their order varied between
+	// runs with the map iteration order.
 	sort.Slice(listOfKeys, func(i, j int) bool {
-		return listOfKeys[i].PrivateKeyPath < listOfKeys[j].PrivateKeyPath
+		return listOfKeys[i].IdentityPath() < listOfKeys[j].IdentityPath()
 	})
 
 	return listOfKeys, nil

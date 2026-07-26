@@ -56,7 +56,7 @@ func newKeyDetailModel(k keys.Key, results []audit.AuditResult, store *storage.S
 		// Match on the key's identity (private path, or public path for a
 		// public-only key) since the audit records findings under the public path
 		// when there is no private key.
-		if r.KeyPath == keyID(k) {
+		if r.KeyPath == k.IdentityPath() {
 			findings = append(findings, r)
 		}
 	}
@@ -155,7 +155,9 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 			}
 			m.copied = true
 		case "A":
-			if m.confirmDelete || m.key.Fingerprint == "" || m.inAgent {
+			// A public-only or unrecognised key has a fingerprint (read off the .pub)
+			// but no usable private key, so the agent has nothing to load.
+			if m.confirmDelete || m.key.PrivateKeyPath == "" || m.key.Fingerprint == "" || m.inAgent {
 				break
 			}
 			if m.key.HasPassphrase {
@@ -163,6 +165,10 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 			}
 			return m, addToAgentCmd(m.key, nil)
 		case "r":
+			// keys.RotateKey rejects an empty private path, so refuse before the form.
+			if m.key.PrivateKeyPath == "" {
+				break
+			}
 			m.confirmDelete = false
 			m = m.enterRotateForm()
 		case "d":
@@ -448,36 +454,29 @@ func rotateKeyCmd(k keys.Key, oldTags []string, oldNote, comment, passphrase str
 	}
 }
 
-// keyID is a key's stable identity for list lookups: its private-key path, or its
-// public-key path when it is a public-only key (empty private path). Using it
-// avoids matching every public-only key by the same empty string.
-func keyID(k keys.Key) string {
-	if k.PrivateKeyPath != "" {
-		return k.PrivateKeyPath
-	}
-	return k.PublicKeyPath
-}
-
 func deleteKeyCmd(k keys.Key) tea.Cmd {
 	return func() tea.Msg {
-		// Remove only the files that actually exist for this key. Guard every path
-		// against being empty so a public-only key never turns "" + ".bak" into a
-		// stray ".bak" removed from the process working directory.
-		if k.PrivateKeyPath != "" {
-			if err := os.Remove(k.PrivateKeyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		// PrivateFilePath, so an unrecognised private file is removed too rather
+		// than left behind. Guard every path against being empty so a public-only
+		// key never turns "" + ".bak" into a stray removal in the working directory.
+		priv := k.PrivateFilePath()
+		if priv != "" {
+			// Abort before touching the .pub: it is what keeps the key visible to
+			// keys.Parse, so a private file we failed to remove must stay findable.
+			if err := os.Remove(priv); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return errMsg{err}
 			}
-			_ = os.Remove(k.PrivateKeyPath + ".bak")
+			_ = os.Remove(priv + ".bak")
 		}
 		pubPath := k.PublicKeyPath
-		if pubPath == "" && k.PrivateKeyPath != "" {
-			pubPath = k.PrivateKeyPath + ".pub"
+		if pubPath == "" && priv != "" {
+			pubPath = priv + ".pub"
 		}
 		if pubPath != "" {
 			_ = os.Remove(pubPath)
 			_ = os.Remove(pubPath + ".bak")
 		}
-		return keyDeletedMsg{path: keyID(k)}
+		return keyDeletedMsg{path: k.IdentityPath()}
 	}
 }
 
@@ -488,7 +487,7 @@ func (m keyDetailModel) view() string {
 	var sb strings.Builder
 
 	title := sectionHeaderStyle.Width(m.width).Render(
-		"Key: " + fitLeft(k.PrivateKeyPath, m.width-10),
+		"Key: " + fitLeft(k.IdentityPath(), m.width-10),
 	)
 	sb.WriteString(title + "\n\n")
 
@@ -503,7 +502,12 @@ func (m keyDetailModel) view() string {
 	field("Bit size", fmt.Sprintf("%d", k.BitSize))
 	field("Comment", ifEmpty(k.Comment, "—"))
 	field("Fingerprint", ifEmpty(k.Fingerprint, "—"))
-	field("Modified", k.ModifiedAt.Format("2006-01-02 15:04:05"))
+	// ModifiedAt is only read off a private file that parsed.
+	modified := "—"
+	if !k.ModifiedAt.IsZero() {
+		modified = k.ModifiedAt.Format("2006-01-02 15:04:05")
+	}
+	field("Modified", modified)
 	field("Has passphrase", boolLabel(k.HasPassphrase))
 	field("Public only", boolLabel(k.IsPublicOnly))
 	if !k.IsPublicOnly {
@@ -513,7 +517,14 @@ func (m keyDetailModel) view() string {
 		}
 		field("In ssh-agent", agentStatus)
 	}
-	field("Private path", k.PrivateKeyPath)
+	switch {
+	case k.PrivateKeyPath != "":
+		field("Private path", k.PrivateKeyPath)
+	case k.UnparsedPrivatePath != "":
+		field("Private path", k.UnparsedPrivatePath+"  "+warnMsgStyle.Render("(not recognized)"))
+	default:
+		field("Private path", "—")
+	}
 	if k.PublicKeyPath != "" {
 		field("Public path", k.PublicKeyPath)
 	}
@@ -582,7 +593,14 @@ func (m keyDetailModel) view() string {
 	case m.copied:
 		sb.WriteString("\n" + copiedStyle.Render("✓ public key copied to clipboard"))
 	case m.confirmDelete:
-		sb.WriteString("\n" + warnMsgStyle.Render("delete key files? press d again to confirm · esc to cancel"))
+		// Name the unrecognised file: until now nothing on this screen showed it,
+		// so the user would not know it is about to be removed.
+		prompt := "delete key files?"
+		if k.UnparsedPrivatePath != "" {
+			prompt = "delete key files, including the unrecognized " +
+				filepath.Base(k.UnparsedPrivatePath) + "?"
+		}
+		sb.WriteString("\n" + warnMsgStyle.Render(prompt+" press d again to confirm · esc to cancel"))
 	}
 
 	return sb.String()
