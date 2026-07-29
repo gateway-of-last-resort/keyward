@@ -24,7 +24,7 @@ A clear description of the bug and what you expected instead.
 
 - Keyward version (`keyward --version`):
 - OS / arch:
-- Install method (release binary / Homebrew / `go install` / source):
+- Install method (release binary / Homebrew / AUR / FreeBSD pkg / `go install` / source):
 - Go version (if built from source):
 
 ## Logs / output

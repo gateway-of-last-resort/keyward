@@ -83,6 +83,23 @@ The [`keyward-bin`](https://aur.archlinux.org/packages/keyward-bin) package is
 maintained by the community rather than by this project, so it can lag a release
 behind. It installs the same signed binaries published here.
 
+### FreeBSD
+
+```bash
+pkg install keyward
+```
+
+Or build it from the ports tree:
+
+```bash
+cd /usr/ports/security/keyward && make install clean
+```
+
+The [`security/keyward`](https://github.com/freebsd/freebsd-ports/tree/main/security/keyward)
+port is maintained by a FreeBSD committer rather than by this project, so it can
+lag a release behind. Unlike the packages above it is compiled from source, not
+from the binaries published here.
+
 ### Download a release binary
 
 Copy-paste this to grab the right archive for your OS/arch from the
