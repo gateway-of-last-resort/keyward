@@ -22,6 +22,7 @@ var (
 	ErrCorruptedMasterKey = errors.New("master key file is corrupted")
 	ErrUnsupportedVersion = errors.New("unsupported master key version")
 	ErrWriteFailed        = errors.New("failed to write master key file")
+	ErrReadFailed         = errors.New("failed to read master key file")
 	ErrEmptyPassword      = errors.New("master key password must not be empty")
 )
 
@@ -218,12 +219,12 @@ func LoadMasterKey(path, password string) (age.Identity, error) {
 			return nil, fmt.Errorf("%w: %w", ErrCorruptedMasterKey, rnErr)
 		}
 	} else if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrReadFailed, err)
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w", err)
+		return nil, fmt.Errorf("%w: %w", ErrReadFailed, err)
 	}
 
 	if len(data) < minFileSize {

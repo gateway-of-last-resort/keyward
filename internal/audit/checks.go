@@ -256,23 +256,35 @@ func checkStrictHostKeyChecking(cfg *config.Config) []AuditResult {
 	return results
 }
 
+// identityFiles returns every IdentityFile value in the config, the global block
+// included: a key declared before the first Host applies to every host.
+func identityFiles(cfg *config.Config) []string {
+	var paths []string
+
+	if values, found := config.GetParam(&cfg.Global, "IdentityFile"); found {
+		paths = append(paths, values...)
+	}
+	for _, block := range cfg.Blocks {
+		if values, found := config.GetParam(&block, "IdentityFile"); found {
+			paths = append(paths, values...)
+		}
+	}
+	return paths
+}
+
 func checkIdentityFileExists(cfg *config.Config) []AuditResult {
 	var results []AuditResult
 
-	for _, block := range cfg.Blocks {
-		if values, found := config.GetParam(&block, "IdentityFile"); found {
-			for _, path := range values {
-				expandedPath := expandPath(path)
-				if _, err := os.Stat(expandedPath); err != nil {
-					results = append(results, AuditResult{
-						KeyPath:  expandedPath,
-						Severity: Warning,
-						Category: CategoryConfig,
-						Message:  "Identity file does not exist",
-						Fix:      "Check that the key exists at " + expandedPath + " or update IdentityFile in config",
-					})
-				}
-			}
+	for _, path := range identityFiles(cfg) {
+		expandedPath := expandPath(path)
+		if _, err := os.Stat(expandedPath); err != nil {
+			results = append(results, AuditResult{
+				KeyPath:  expandedPath,
+				Severity: Warning,
+				Category: CategoryConfig,
+				Message:  "Identity file does not exist",
+				Fix:      "Check that the key exists at " + expandedPath + " or update IdentityFile in config",
+			})
 		}
 	}
 	return results
@@ -282,12 +294,8 @@ func newCheckKeyLinkedToHost(allKeys []keys.Key) ConfigCheck {
 	return func(cfg *config.Config) []AuditResult {
 		linkedPaths := make(map[string]bool)
 
-		for _, block := range cfg.Blocks {
-			if values, found := config.GetParam(&block, "IdentityFile"); found {
-				for _, path := range values {
-					linkedPaths[expandPath(path)] = true
-				}
-			}
+		for _, path := range identityFiles(cfg) {
+			linkedPaths[expandPath(path)] = true
 		}
 
 		var results []AuditResult

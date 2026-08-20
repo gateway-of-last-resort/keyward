@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"filippo.io/age"
@@ -47,6 +48,60 @@ func writeBackupArchive(t *testing.T, path string, id *age.X25519Identity, entri
 	}
 	if err := os.WriteFile(path, ct, 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRestore_ClampPerFileKind pins which bits survive a restore: a public half
+// keeps the read bits it was archived with (0644 used to be narrowed to 0600 by
+// the blanket clamp), while everything else stays owner-only. Archive modes are
+// still never trusted, so a hostile 0777 is clamped either way.
+func TestRestore_ClampPerFileKind(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are synthetic on Windows")
+	}
+
+	tests := []struct {
+		name     string
+		archived int64
+		want     os.FileMode
+	}{
+		{name: "id_rsa.pub", archived: 0644, want: 0644},
+		{name: "id_rsa.pub", archived: 0600, want: 0600},
+		{name: "id_rsa.pub", archived: 0777, want: 0644},
+		{name: "id_rsa", archived: 0644, want: 0600},
+		{name: "config", archived: 0644, want: 0600},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+"/"+strconv.FormatInt(tt.archived, 8), func(t *testing.T) {
+			root := t.TempDir()
+			sshDir := filepath.Join(root, "ssh")
+			vaultDir := filepath.Join(root, "vault")
+			if err := os.MkdirAll(sshDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := storage.Init(vaultDir); err != nil {
+				t.Fatal(err)
+			}
+
+			id := newIdentity(t)
+			backup := filepath.Join(root, "backup.tar.age")
+			writeBackupArchive(t, backup, id, []tarEntry{
+				{name: tt.name, mode: tt.archived, data: []byte("DATA")},
+			})
+
+			if err := storage.RestoreBackup(backup, sshDir, vaultDir, id); err != nil {
+				t.Fatalf("RestoreBackup: %v", err)
+			}
+
+			info, err := os.Stat(filepath.Join(sshDir, tt.name))
+			if err != nil {
+				t.Fatalf("restored file missing: %v", err)
+			}
+			if info.Mode().Perm() != tt.want {
+				t.Errorf("perm = %04o, want %04o", info.Mode().Perm(), tt.want)
+			}
+		})
 	}
 }
 

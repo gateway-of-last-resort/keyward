@@ -140,6 +140,58 @@ func TestCheckKeyLinkedToHost_UnparseablePrivate(t *testing.T) {
 	}
 }
 
+// TestIdentityFileInGlobalBlock covers an IdentityFile declared before the first
+// Host, which applies to every host: the key it names must count as linked, and
+// a global path that does not exist must still be reported. Both checks used to
+// walk cfg.Blocks only, so a globally declared key was reported unlinked and a
+// missing one went unnoticed.
+func TestIdentityFileInGlobalBlock(t *testing.T) {
+	t.Run("key is linked", func(t *testing.T) {
+		dir := t.TempDir()
+		// An unparseable private half is enough here: the key is still
+		// discovered, is not public-only, and resolves to the private file.
+		priv := filepath.Join(dir, "id_global")
+		if err := os.WriteFile(priv, []byte("JUNK\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		pub, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sshPub, err := ssh.NewPublicKey(pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(priv+".pub", ssh.MarshalAuthorizedKey(sshPub), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		ks, err := keys.Parse(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := config.ParseBytes("config", []byte("IdentityFile "+priv+"\n\nHost h\n    HostName example.com\n"))
+		results := audit.Run(ks, &c, dir).Results
+
+		if _, unlinked := hasMessage(results, "key not linked to any host"); unlinked {
+			t.Error("a key named by a global IdentityFile must count as linked")
+		}
+	})
+
+	t.Run("missing path is reported", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg := "IdentityFile " + filepath.Join(dir, "absent") + "\n\nHost h\n"
+
+		sev, found := hasMessage(runConfigAudit(t, cfg, dir), "Identity file does not exist")
+		if !found {
+			t.Fatal("expected a finding for a missing global IdentityFile")
+		}
+		if sev != audit.Warning {
+			t.Errorf("severity = %s, want WARNING", sev)
+		}
+	})
+}
+
 func TestCheckForwardAgent(t *testing.T) {
 	dir := t.TempDir()
 
