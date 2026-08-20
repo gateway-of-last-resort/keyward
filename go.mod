@@ -1,6 +1,6 @@
 module github.com/gateway-of-last-resort/keyward
 
-go 1.26.4
+go 1.26.6
 
 require (
 	filippo.io/age v1.3.1
