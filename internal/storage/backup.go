@@ -264,9 +264,15 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 			_ = os.Remove(tmpPath)
 			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
-		// Clamp to at most owner rw; never trust the archive's mode bits (a
-		// restored private key must not land at 0777).
-		if err := os.Chmod(targetPath, os.FileMode(header.Mode).Perm()&0600); err != nil {
+		// Clamp; never trust the archive's mode bits (a restored private key must
+		// not land at 0777). A public half keeps the read bits it was archived
+		// with: 0644 is its normal mode, and restoring it at 0600 narrows the
+		// file behind the user's back.
+		mask := os.FileMode(0600)
+		if strings.HasSuffix(name, ".pub") {
+			mask = 0644
+		}
+		if err := os.Chmod(targetPath, os.FileMode(header.Mode).Perm()&mask); err != nil {
 			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 
