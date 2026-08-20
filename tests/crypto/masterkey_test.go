@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"filippo.io/age"
@@ -158,6 +159,44 @@ func TestLoadMasterKey_Errors(t *testing.T) {
 			t.Fatalf("got %v, want ErrWrongPassword", err)
 		}
 	})
+	// A file that exists but cannot be read used to surface the raw OS error,
+	// which callers could neither classify with errors.Is nor tell apart from a
+	// corrupt file.
+	t.Run("unreadable", func(t *testing.T) {
+		path := keyPath(t)
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		err := errFromLoad(t, path)
+		if !errors.Is(err, crypto.ErrReadFailed) {
+			t.Fatalf("got %v, want ErrReadFailed", err)
+		}
+		if errors.Is(err, crypto.ErrMasterKeyNotFound) || errors.Is(err, crypto.ErrCorruptedMasterKey) {
+			t.Errorf("read failure misclassified: %v", err)
+		}
+	})
+	t.Run("permission denied", func(t *testing.T) {
+		if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+			t.Skip("chmod 0000 does not deny reads here")
+		}
+		path := initKey(t, "pw")
+		if err := os.Chmod(path, 0000); err != nil {
+			t.Fatal(err)
+		}
+		if err := errFromLoad(t, path); !errors.Is(err, crypto.ErrReadFailed) {
+			t.Fatalf("got %v, want ErrReadFailed", err)
+		}
+	})
+}
+
+// errFromLoad returns the error from an unlock that must not succeed.
+func errFromLoad(t *testing.T, path string) error {
+	t.Helper()
+	if _, err := crypto.LoadMasterKey(path, "pw"); err != nil {
+		return err
+	}
+	t.Fatal("LoadMasterKey succeeded, want an error")
+	return nil
 }
 
 // TestLoadMasterKey_Corrupt drives the positional header parser through every
