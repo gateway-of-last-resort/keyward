@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-20
+
+Three fixes carried over from the pre-1.0 review. No format or command-line
+changes.
+
+### Fixed
+
+- **An `IdentityFile` written before the first `Host` is honoured.** Such a line
+  applies to every host, but both checks that read `IdentityFile` walked the host
+  blocks only. A key declared that way was reported as linked to no host, and a
+  global `IdentityFile` pointing at a file that does not exist went unreported.
+- **Restoring a backup keeps a public key readable.** Every restored file was
+  clamped to owner-only, which is right for a private key but silently narrowed
+  the `.pub` half from its usual `0644`. Public halves now keep the read bits
+  they were archived with; the archive's mode is still never trusted, so a
+  hostile mode is clamped as before.
+- **A master key that cannot be read reports why.** The error from reading
+  `master.key` was passed through unwrapped, so a permission problem surfaced as
+  a bare system error that could not be told apart from a corrupt file. It now
+  carries `ErrReadFailed`.
+
 ## [1.0.2] - 2026-07-26
 
 Fixes found by testing the 1.0.1 build on Windows. Three of them were never
@@ -356,7 +377,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/gateway-of-last-resort/keyward/compare/v0.9.0...v1.0.0
