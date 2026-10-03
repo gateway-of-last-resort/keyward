@@ -233,3 +233,35 @@ func TestForget_RefusesChangedLine(t *testing.T) {
 		t.Fatalf("file modified despite the refusal:\n%q", got)
 	}
 }
+
+// Forget on a symlinked known_hosts must rewrite the link's target and keep the
+// link itself.
+func TestForget_WritesThroughSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs extra privileges on Windows")
+	}
+	target := writeKnownHosts(t, []string{"alpha " + authorizedKey(t), "beta " + authorizedKey(t)})
+	link := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := knownhosts.Forget(link, 1, lineAt(t, link, 1)); err != nil {
+		t.Fatalf("Forget: %v", err)
+	}
+
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("known_hosts is no longer a symlink after Forget")
+	}
+	entries, err := knownhosts.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Hosts[0] != "beta" {
+		t.Fatalf("target entries = %+v, want only beta", entries)
+	}
+}

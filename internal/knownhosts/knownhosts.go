@@ -126,6 +126,10 @@ func Forget(path string, lineNum int, raw string) error {
 // mirroring internal/storage.atomicWriteFile but honouring the caller's perm so
 // an existing known_hosts keeps its original mode.
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
+	path, err := resolveSymlink(path)
+	if err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
@@ -157,6 +161,16 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return syncDir(dir)
+}
+
+// resolveSymlink returns the file a symlinked path points to, or path itself,
+// so the rename in atomicWrite updates the target instead of replacing the link.
+func resolveSymlink(path string) (string, error) {
+	fi, err := os.Lstat(path)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	return filepath.EvalSymlinks(path)
 }
 
 // syncDir fsyncs a directory so a rename within it is durable. Windows has no

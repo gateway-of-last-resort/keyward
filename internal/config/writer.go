@@ -72,8 +72,13 @@ func Serialize(c *Config) []byte {
 }
 
 // WriteAtomic writes data to path via a temp file + rename, then sets permissions to 0600.
+// A symlinked path is written through to its target, so the link survives.
 func WriteAtomic(path string, data []byte) error {
 
+	path, err := resolveSymlink(path)
+	if err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 
 	tempFile, err := os.CreateTemp(dir, "temp.*.atom")
@@ -117,6 +122,18 @@ func WriteAtomic(path string, data []byte) error {
 	}
 	defer func() { _ = d.Close() }()
 	return d.Sync()
+}
+
+// resolveSymlink returns the file a symlinked path points to, or path itself.
+// The rename in an atomic write replaces whatever sits at its destination, so
+// writing to the link's own path would swap a dotfiles-managed symlink (stow,
+// chezmoi, home-manager) for a regular file and leave its source untouched.
+func resolveSymlink(path string) (string, error) {
+	fi, err := os.Lstat(path)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	return filepath.EvalSymlinks(path)
 }
 
 func backup(path string) error {
