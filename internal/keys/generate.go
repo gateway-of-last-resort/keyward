@@ -210,6 +210,11 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, privatePath)
 	}
 
+	if err := filePriv.Sync(); err != nil {
+		_ = filePriv.Close()
+		cleanup()
+		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, privatePath)
+	}
 	if err := filePriv.Close(); err != nil {
 		cleanup()
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, privatePath)
@@ -228,6 +233,11 @@ func GenerateKeys(dir string, opts GenerateOptions) (Key, error) {
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, publicPath)
 	}
 
+	if err := filePub.Sync(); err != nil {
+		_ = filePub.Close()
+		cleanup()
+		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, publicPath)
+	}
 	if err := filePub.Close(); err != nil {
 		cleanup()
 		return Key{}, fmt.Errorf("%w: %s", ErrWriteFailed, publicPath)

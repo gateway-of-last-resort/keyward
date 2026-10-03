@@ -65,6 +65,11 @@ func ImportKey(destDir, srcPath string, opts ImportOptions) (Key, error) {
 		_ = os.Remove(destPriv)
 		return Key{}, fmt.Errorf("%w: %w", ErrImportFailed, err)
 	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(destPriv)
+		return Key{}, fmt.Errorf("%w: %w", ErrImportFailed, err)
+	}
 	if err := f.Close(); err != nil {
 		_ = os.Remove(destPriv)
 		return Key{}, fmt.Errorf("%w: %w", ErrImportFailed, err)
@@ -134,6 +139,11 @@ func writePublicFile(destPub string, data []byte, overwrite bool) error {
 		return fmt.Errorf("%w: %w", ErrImportFailed, err)
 	}
 	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(destPub)
+		return fmt.Errorf("%w: %w", ErrImportFailed, err)
+	}
+	if err := f.Sync(); err != nil {
 		_ = f.Close()
 		_ = os.Remove(destPub)
 		return fmt.Errorf("%w: %w", ErrImportFailed, err)
