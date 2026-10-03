@@ -1,6 +1,7 @@
 package keys
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -52,6 +53,19 @@ func ImportKey(destDir, srcPath string, opts ImportOptions) (Key, error) {
 	}
 
 	destPriv := filepath.Join(destDir, filepath.Base(srcPath))
+	destPub := destPriv + ".pub"
+
+	pubData, err := publicKeyFor(srcPath, rawKey, protected)
+	if err != nil {
+		return Key{}, err
+	}
+	// With no public half to write, a .pub already at the destination would be
+	// paired with the imported private key and lend it the wrong fingerprint.
+	if pubData == nil && !opts.Overwrite {
+		if _, err := os.Lstat(destPub); err == nil {
+			return Key{}, fmt.Errorf("%w: %s", ErrKeyAlreadyExists, destPub)
+		}
+	}
 
 	f, err := openKeyFile(destPriv, opts.Overwrite, 0600)
 	if err != nil {
@@ -75,7 +89,12 @@ func ImportKey(destDir, srcPath string, opts ImportOptions) (Key, error) {
 		return Key{}, fmt.Errorf("%w: %w", ErrImportFailed, err)
 	}
 
-	if err := importPublicKey(srcPath, destPriv, rawKey, protected, opts.Overwrite); err != nil {
+	if pubData != nil {
+		err = writePublicFile(destPub, pubData, opts.Overwrite)
+	} else if rmErr := os.Remove(destPub); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+		err = fmt.Errorf("%w: %w", ErrImportFailed, rmErr)
+	}
+	if err != nil {
 		_ = os.Remove(destPriv)
 		return Key{}, err
 	}
@@ -108,26 +127,37 @@ func ExpandTilde(p string) string {
 	return filepath.Join(home, p[2:])
 }
 
-// importPublicKey writes destPriv's .pub: it copies the source's .pub when
-// present, otherwise derives one from the private key (only possible when the
-// key is not passphrase-protected). A passphrase-protected key with no .pub is
-// imported without one — Parse still recognizes it by its private file.
-func importPublicKey(srcPath, destPriv string, rawKey any, protected, overwrite bool) error {
-	destPub := destPriv + ".pub"
-
-	if pubData, err := os.ReadFile(srcPath + ".pub"); err == nil {
-		return writePublicFile(destPub, pubData, overwrite)
+// publicKeyFor returns the .pub content to install next to the imported key:
+// the source's .pub when present, otherwise one derived from the private key.
+// It returns nil for a passphrase-protected key with no .pub, which can't be
+// derived without the passphrase; Parse still recognizes it by its private file.
+// A source .pub that is not a public key, or does not match an unencrypted
+// private key, is rejected rather than copied.
+func publicKeyFor(srcPath string, rawKey any, protected bool) ([]byte, error) {
+	pubData, err := os.ReadFile(srcPath + ".pub")
+	if err == nil {
+		pub, _, _, _, perr := ssh.ParseAuthorizedKey(pubData)
+		if perr != nil {
+			return nil, fmt.Errorf("%w: %s.pub is not a public key", ErrInvalidKey, srcPath)
+		}
+		if !protected {
+			if signer, serr := ssh.NewSignerFromKey(rawKey); serr == nil &&
+				!bytes.Equal(signer.PublicKey().Marshal(), pub.Marshal()) {
+				return nil, fmt.Errorf("%w: %s.pub does not match the private key", ErrInvalidKey, srcPath)
+			}
+		}
+		return pubData, nil
 	}
 
 	if protected {
-		return nil // can't derive a public key without the passphrase
+		return nil, nil
 	}
 
 	signer, err := ssh.NewSignerFromKey(rawKey)
 	if err != nil {
-		return nil // unusual key type; skip .pub rather than fail the import
+		return nil, nil // unusual key type; skip .pub rather than fail the import
 	}
-	return writePublicFile(destPub, ssh.MarshalAuthorizedKey(signer.PublicKey()), overwrite)
+	return ssh.MarshalAuthorizedKey(signer.PublicKey()), nil
 }
 
 func writePublicFile(destPub string, data []byte, overwrite bool) error {
