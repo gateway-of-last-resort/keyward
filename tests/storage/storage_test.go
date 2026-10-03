@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -851,5 +852,72 @@ func TestSave_ConcurrentWithLoad(t *testing.T) {
 		if strings.HasSuffix(e.Name(), ".bak") || strings.HasPrefix(e.Name(), ".tmp-") {
 			t.Errorf("leftover file after concurrent saves: %s", e.Name())
 		}
+	}
+}
+
+// CreateBackup walks ~/.ssh recursively: Include'd fragments and keys kept in
+// subdirectories are archived. A link to a file is archived by content, a link
+// to a directory is reported instead of followed, and a top-level .keyward is
+// reported because it would collide with the vault prefix on restore.
+func TestCreateBackup_Recursive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs extra privileges on Windows")
+	}
+	sshDir, vaultDir := t.TempDir(), t.TempDir()
+	id := newIdentity(t)
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(sshDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("config", "Include config.d/*\n")
+	write("config.d/work", "Host work\n")
+	write("keys/deep/id_x", "key")
+	write("known_hosts", "top-level, excluded")
+	write("config.d/known_hosts", "nested, kept")
+	write(".keyward/stray", "collides")
+
+	outside := filepath.Join(t.TempDir(), "linked_file")
+	if err := os.WriteFile(outside, []byte("via link"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(sshDir, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sshDir, filepath.Join(sshDir, "loop")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := storage.CreateBackup(sshDir, vaultDir, id)
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+	slices.Sort(res.Skipped)
+	if want := []string{".keyward", "loop"}; !slices.Equal(res.Skipped, want) {
+		t.Errorf("Skipped = %v, want %v", res.Skipped, want)
+	}
+
+	restoreTo := t.TempDir()
+	if err := storage.RestoreBackup(res.Path, restoreTo, t.TempDir(), id); err != nil {
+		t.Fatalf("RestoreBackup: %v", err)
+	}
+	for rel, want := range map[string]string{
+		"config.d/work":        "Host work\n",
+		"keys/deep/id_x":       "key",
+		"config.d/known_hosts": "nested, kept",
+		"linked":               "via link",
+	} {
+		got, err := os.ReadFile(filepath.Join(restoreTo, filepath.FromSlash(rel)))
+		if err != nil || string(got) != want {
+			t.Errorf("%s restored as %q (err %v), want %q", rel, got, err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(restoreTo, "known_hosts")); err == nil {
+		t.Error("top-level known_hosts must stay out of the backup")
 	}
 }

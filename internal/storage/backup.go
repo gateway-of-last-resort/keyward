@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,30 +28,64 @@ type BackupResult struct {
 }
 
 func CreateBackup(sshDir, vaultDir string, identity age.Identity) (BackupResult, error) {
-	skipFiles := map[string]bool{
-		"known_hosts":     true,
-		"authorized_keys": true,
-	}
-
 	type archiveEntry struct {
 		path    string
 		tarName string
 	}
 
-	entries, err := os.ReadDir(sshDir)
-	if err != nil {
+	if fi, err := os.Stat(sshDir); err != nil || !fi.IsDir() {
 		return BackupResult{}, ErrBackupFailed
 	}
 
 	var files []archiveEntry
-	for _, entry := range entries {
-		if entry.IsDir() || skipFiles[entry.Name()] {
-			continue
+	var skipped []string
+	walkErr := filepath.WalkDir(sshDir, func(path string, d fs.DirEntry, err error) error {
+		if path == sshDir {
+			return err
 		}
-		files = append(files, archiveEntry{
-			path:    filepath.Join(sshDir, entry.Name()),
-			tarName: entry.Name(),
-		})
+		rel, relErr := filepath.Rel(sshDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		tarName := filepath.ToSlash(rel)
+		if err != nil {
+			skipped = append(skipped, tarName)
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		topLevel := !strings.Contains(tarName, "/")
+
+		switch {
+		case d.IsDir():
+			// A top-level .keyward would collide with the prefix restore uses
+			// for vault files.
+			if topLevel && tarName == defaultDir {
+				skipped = append(skipped, tarName)
+				return fs.SkipDir
+			}
+			return nil
+		case d.Type()&fs.ModeSymlink != 0:
+			// A link to a file is archived by content, as before; a link to a
+			// directory is not followed, so a loop can't recurse forever.
+			if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+				skipped = append(skipped, tarName)
+				return nil
+			}
+		case !d.Type().IsRegular():
+			// Sockets (ControlMaster) and FIFOs carry no data, and reading a
+			// FIFO would block the backup.
+			return nil
+		}
+		if topLevel && (tarName == "known_hosts" || tarName == "authorized_keys") {
+			return nil
+		}
+		files = append(files, archiveEntry{path: path, tarName: tarName})
+		return nil
+	})
+	if walkErr != nil {
+		return BackupResult{}, ErrBackupFailed
 	}
 
 	metaPath := filepath.Join(vaultDir, metadataFile)
@@ -62,7 +97,6 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (BackupResult,
 	tarBuffer := new(bytes.Buffer)
 	tarWriter := tar.NewWriter(tarBuffer)
 
-	var skipped []string
 	for _, f := range files {
 		data, stat, err := readForBackup(f.path, f.path == metaPath)
 		if errors.Is(err, os.ErrNotExist) && f.path == metaPath {
