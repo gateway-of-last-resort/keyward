@@ -553,6 +553,39 @@ func TestSaveStore_SnapshotsBeforeSave(t *testing.T) {
 	}
 }
 
+// Background saves run on separate goroutines, so a newer snapshot can reach the
+// disk before an older one. The older save must then be dropped instead of
+// overwriting the newer metadata.
+func TestSaveStore_StaleSnapshotDropped(t *testing.T) {
+	vaultDir := filepath.Join(t.TempDir(), ".keyward")
+	if err := storage.Init(vaultDir); err != nil {
+		t.Fatal(err)
+	}
+	id, err := crypto.InitMasterKey(filepath.Join(vaultDir, "master.key"), "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st := storage.Store{Keys: map[string]storage.KeyMetadata{}}
+	m := Model{store: &st, identity: id, vaultDir: vaultDir, saver: &storeSaver{}}
+
+	st.Keys["SHA256:x"] = storage.KeyMetadata{Fingerprint: "SHA256:x", Note: "old"}
+	older := m.saveStore()
+	st.Keys["SHA256:x"] = storage.KeyMetadata{Fingerprint: "SHA256:x", Note: "new"}
+	newer := m.saveStore()
+
+	runCmd(newer)
+	runCmd(older)
+
+	loaded, err := storage.Load(vaultDir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Keys["SHA256:x"].Note; got != "new" {
+		t.Fatalf("note on disk = %q, want the newer snapshot %q", got, "new")
+	}
+}
+
 func TestNav_QQuitsFromKeys(t *testing.T) {
 	m := Model{active: ScreenKeys}
 	_, cmd := m.Update(k("q"))

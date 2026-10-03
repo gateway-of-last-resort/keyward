@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"filippo.io/age"
@@ -75,6 +76,19 @@ type Model struct {
 	// timer so a stale tick can't clear a newer error early.
 	err      error
 	errToken int
+
+	// saver orders background metadata saves; a pointer so every copy of the
+	// value-typed Model shares it.
+	saver *storeSaver
+}
+
+// storeSaver keeps background saves from landing out of order. Each saveStore
+// Cmd runs on its own goroutine, so a later snapshot can reach the disk first;
+// a save whose generation is older than the last one written is dropped.
+type storeSaver struct {
+	mu      sync.Mutex
+	gen     uint64
+	written uint64
 }
 
 // Version is shown in the Settings footer. main sets it to the ldflags-injected
@@ -111,6 +125,7 @@ func New(k []keys.Key, cfg *config.Config, report audit.AuditReport, sshDir, vau
 		setupView:     setupView,
 		unlockView:    unlockView,
 		settingsView:  newSettingsModel(masterKeyPath, sshDir, vaultDir),
+		saver:         &storeSaver{},
 	}
 	m.keyList = newKeyListModel(k, report.Results, sshDir)
 	return m
@@ -818,9 +833,27 @@ func (m Model) saveStore() tea.Cmd {
 	}
 	identity := m.identity
 	vaultDir := m.vaultDir
+	saver := m.saver
+	var gen uint64
+	if saver != nil {
+		saver.mu.Lock()
+		saver.gen++
+		gen = saver.gen
+		saver.mu.Unlock()
+	}
 	return func() tea.Msg {
+		if saver != nil {
+			saver.mu.Lock()
+			defer saver.mu.Unlock()
+			if gen < saver.written {
+				return nil
+			}
+		}
 		if err := storage.Save(&snapshot, vaultDir, identity); err != nil {
 			return errMsg{err}
+		}
+		if saver != nil {
+			saver.written = gen
 		}
 		return nil
 	}

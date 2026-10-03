@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -794,5 +796,60 @@ func TestRestoreBackup_WrongIdentity(t *testing.T) {
 	err = storage.RestoreBackup(res.Path, t.TempDir(), t.TempDir(), id2)
 	if !errors.Is(err, storage.ErrRestoreFailed) {
 		t.Errorf("err = %v, want ErrRestoreFailed", err)
+	}
+}
+
+// TestSave_ConcurrentWithLoad runs Saves and Loads at once, as the TUI does when
+// it issues one background save per edit and reloads the store after a restore.
+// Save moves the live file aside before writing the new one, so an unserialized
+// Load could find neither file and return an empty store, which the next save
+// would then write over the real metadata.
+func TestSave_ConcurrentWithLoad(t *testing.T) {
+	dir := t.TempDir()
+	id := newIdentity(t)
+	const fp = "SHA256:keep"
+
+	base := storage.Store{Keys: map[string]storage.KeyMetadata{fp: testMeta(fp)}}
+	if err := storage.Save(&base, dir, id); err != nil {
+		t.Fatal(err)
+	}
+
+	const rounds = 200
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*rounds)
+	for range rounds {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			s := storage.Store{Keys: map[string]storage.KeyMetadata{fp: testMeta(fp)}}
+			errs <- storage.Save(&s, dir, id)
+		}()
+		go func() {
+			defer wg.Done()
+			s, err := storage.Load(dir, id)
+			if err == nil {
+				if _, ok := s.Keys[fp]; !ok {
+					err = errors.New("Load returned a store without the saved key")
+				}
+			}
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".bak") || strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Errorf("leftover file after concurrent saves: %s", e.Name())
+		}
 	}
 }

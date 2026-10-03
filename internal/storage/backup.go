@@ -54,25 +54,20 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (BackupResult,
 	}
 
 	metaPath := filepath.Join(vaultDir, metadataFile)
-	if _, err := os.Stat(metaPath); err == nil {
-		files = append(files, archiveEntry{
-			path:    metaPath,
-			tarName: defaultDir + "/" + metadataFile,
-		})
-	}
+	files = append(files, archiveEntry{
+		path:    metaPath,
+		tarName: defaultDir + "/" + metadataFile,
+	})
 
 	tarBuffer := new(bytes.Buffer)
 	tarWriter := tar.NewWriter(tarBuffer)
 
 	var skipped []string
 	for _, f := range files {
-		data, err := os.ReadFile(f.path)
-		if err != nil {
-			skipped = append(skipped, f.tarName)
+		data, stat, err := readForBackup(f.path, f.path == metaPath)
+		if errors.Is(err, os.ErrNotExist) && f.path == metaPath {
 			continue
 		}
-
-		stat, err := os.Stat(f.path)
 		if err != nil {
 			skipped = append(skipped, f.tarName)
 			continue
@@ -129,6 +124,24 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (BackupResult,
 	return BackupResult{Path: finalPath, Skipped: skipped, PruneErr: pruneErr}, nil
 }
 
+// readForBackup reads a file and its mode for archiving. The metadata file is
+// read under metaMu so a concurrent Save can't leave it momentarily absent.
+func readForBackup(path string, isMeta bool) ([]byte, os.FileInfo, error) {
+	if isMeta {
+		metaMu.Lock()
+		defer metaMu.Unlock()
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	stat, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, stat, nil
+}
+
 const maxBackups = 5
 
 const (
@@ -181,6 +194,11 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 		return ErrRestoreFailed
 	}
 	defer crypto.ZeroBytes(plaintext)
+
+	// Restore can overwrite metadata.age; hold metaMu so it never interleaves
+	// with a background Save of the in-memory store.
+	metaMu.Lock()
+	defer metaMu.Unlock()
 
 	tarReader := tar.NewReader(bytes.NewReader(plaintext))
 
