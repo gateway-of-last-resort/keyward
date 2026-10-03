@@ -211,6 +211,11 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 			return ErrRestoreFailed
 		}
 
+		// Keyward only ever archives regular files. A directory or link entry
+		// would otherwise be written out as an empty file over the real one.
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
 		if header.Size < 0 || header.Size > maxRestoreFileSize {
 			return ErrRestoreFailed
 		}
@@ -233,10 +238,11 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 		targetPath := filepath.Join(base, filepath.FromSlash(rel))
 
 		// Containment guard: filepath.Join resolves ".." components, so if the
-		// result escapes base it's a path-traversal attempt — skip it. This
-		// replaces the fragile strings.Contains(name, "..") check.
+		// result escapes base it's a path-traversal attempt; skip it. An entry
+		// that resolves to base itself ("." or ".keyward/") is skipped too: it
+		// would move the whole ~/.ssh or vault directory aside and put a file there.
 		cleanBase := filepath.Clean(base)
-		if targetPath != cleanBase && !strings.HasPrefix(targetPath, cleanBase+string(os.PathSeparator)) {
+		if !strings.HasPrefix(targetPath, cleanBase+string(os.PathSeparator)) {
 			continue
 		}
 

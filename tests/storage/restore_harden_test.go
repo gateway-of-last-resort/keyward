@@ -15,9 +15,11 @@ import (
 )
 
 type tarEntry struct {
-	name string
-	mode int64
-	data []byte
+	name     string
+	mode     int64
+	data     []byte
+	typeflag byte // zero means tar.TypeReg
+	linkname string
 }
 
 // writeBackupArchive builds a tar of entries, encrypts it to id, and writes it
@@ -27,16 +29,27 @@ func writeBackupArchive(t *testing.T, path string, id *age.X25519Identity, entri
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	for _, e := range entries {
+		typeflag := e.typeflag
+		if typeflag == 0 {
+			typeflag = tar.TypeReg
+		}
+		size := int64(len(e.data))
+		if typeflag != tar.TypeReg {
+			size = 0
+		}
 		if err := tw.WriteHeader(&tar.Header{
 			Name:     e.name,
 			Mode:     e.mode,
-			Size:     int64(len(e.data)),
-			Typeflag: tar.TypeReg,
+			Size:     size,
+			Typeflag: typeflag,
+			Linkname: e.linkname,
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tw.Write(e.data); err != nil {
-			t.Fatal(err)
+		if size > 0 {
+			if _, err := tw.Write(e.data); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	if err := tw.Close(); err != nil {
@@ -142,5 +155,48 @@ func TestRestore_ClampsPermissionsAndBlocksTraversal(t *testing.T) {
 	// The traversal entry must not have escaped sshDir.
 	if _, err := os.Stat(filepath.Join(root, "escape")); !os.IsNotExist(err) {
 		t.Errorf("path traversal wrote outside base; stat err = %v", err)
+	}
+}
+
+// Keyward only archives regular files under ~/.ssh and the vault. A crafted or
+// corrupt archive must not turn a link or directory entry into an empty file
+// over a real one, nor replace ~/.ssh or the vault directory itself ("." and ".keyward/.").
+func TestRestore_SkipsNonRegularAndBaseEntries(t *testing.T) {
+	sshDir, vaultDir := t.TempDir(), t.TempDir()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(sshDir, "config")
+	if err := os.WriteFile(cfg, []byte("Host keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	archive := filepath.Join(t.TempDir(), "b.tar.age")
+	writeBackupArchive(t, archive, id, []tarEntry{
+		{name: "config", mode: 0o777, typeflag: tar.TypeSymlink, linkname: "/etc/passwd"},
+		{name: "subdir", mode: 0o755, typeflag: tar.TypeDir},
+		{name: ".", mode: 0o600, data: []byte("x")},
+		{name: ".keyward/.", mode: 0o600, data: []byte("x")},
+		{name: "restored", mode: 0o600, data: []byte("ok")},
+	})
+
+	if err := storage.RestoreBackup(archive, sshDir, vaultDir, id); err != nil {
+		t.Fatalf("RestoreBackup: %v", err)
+	}
+
+	for _, dir := range []string{sshDir, vaultDir} {
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			t.Fatalf("%s is no longer a directory (err %v)", dir, err)
+		}
+	}
+	if got, _ := os.ReadFile(cfg); string(got) != "Host keep\n" {
+		t.Errorf("config overwritten by a symlink entry: %q", got)
+	}
+	if _, err := os.Lstat(filepath.Join(sshDir, "subdir")); err == nil {
+		t.Error("directory entry was restored as a file")
+	}
+	if got, _ := os.ReadFile(filepath.Join(sshDir, "restored")); string(got) != "ok" {
+		t.Errorf("regular entry not restored: %q", got)
 	}
 }
