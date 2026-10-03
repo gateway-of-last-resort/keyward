@@ -27,6 +27,9 @@ var (
 	ErrReadFailed = errors.New("failed to read known_hosts file")
 	// ErrWriteFailed wraps an underlying write error.
 	ErrWriteFailed = errors.New("failed to write known_hosts file")
+	// ErrEntryChanged is returned by Forget when the line no longer holds the
+	// entry the caller parsed, because the file was rewritten in between.
+	ErrEntryChanged = errors.New("known_hosts changed since it was read")
 )
 
 // Entry is one parsed known_hosts line.
@@ -84,8 +87,10 @@ func Parse(path string) ([]Entry, error) {
 
 // Forget removes the line numbered lineNum (1-based) from path and rewrites the
 // file atomically, preserving its mode. Every other line is kept byte-for-byte,
-// including the file's trailing-newline shape.
-func Forget(path string, lineNum int) error {
+// including the file's trailing-newline shape. raw is the line as Parse returned
+// it (Entry.Raw); if the line now differs, nothing is removed and
+// ErrEntryChanged is returned.
+func Forget(path string, lineNum int, raw string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -102,6 +107,9 @@ func Forget(path string, lineNum int) error {
 	lines := strings.Split(string(data), "\n")
 	if lineNum < 1 || lineNum > len(lines) {
 		return fmt.Errorf("%w: %d", ErrLineOutOfRange, lineNum)
+	}
+	if lines[lineNum-1] != raw {
+		return fmt.Errorf("%w: line %d", ErrEntryChanged, lineNum)
 	}
 
 	kept := make([]string, 0, len(lines)-1)

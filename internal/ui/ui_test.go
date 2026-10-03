@@ -1831,6 +1831,43 @@ func TestKnownHosts_ForgetRemovesEntryAndKeepsSize(t *testing.T) {
 	}
 }
 
+// If known_hosts was rewritten after the screen loaded it, forgetting must not
+// remove whatever now sits on the remembered line: it reports the change and
+// reloads the list instead.
+func TestKnownHosts_ForgetAfterExternalChangeReloads(t *testing.T) {
+	sshDir := writeKnownHostsFile(t, 3)
+	path := filepath.Join(sshDir, "known_hosts")
+	m := Model{active: ScreenKnownHosts, sshDir: sshDir, width: 100, height: 30}
+	m, _ = m.navigate(navigateMsg{to: ScreenKnownHosts})
+	m.knownHosts.cursor = 2 // host3.example on line 3
+
+	// Another tool drops the first line; host3 moves up to line 2.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := strings.SplitN(string(data), "\n", 2)[1]
+	if err := os.WriteFile(path, []byte(rewritten), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var cmd tea.Cmd
+	m.knownHosts, _ = m.knownHosts.update(k("d"))
+	m.knownHosts, cmd = m.knownHosts.update(k("d"))
+	next, _ := m.Update(runCmd(cmd))
+	m = next.(Model)
+
+	if m.err == nil {
+		t.Fatal("expected an error telling the user the file changed")
+	}
+	if got, _ := os.ReadFile(path); string(got) != rewritten {
+		t.Fatalf("known_hosts modified despite the change:\n%s", got)
+	}
+	if len(m.knownHosts.entries) != 2 {
+		t.Fatalf("entries after reload = %d, want 2", len(m.knownHosts.entries))
+	}
+}
+
 func TestKnownHosts_EmptyScreenNoCrash(t *testing.T) {
 	m := knownHostsModel{width: 80, height: 20}
 	// d on an empty list is a no-op and must not panic.

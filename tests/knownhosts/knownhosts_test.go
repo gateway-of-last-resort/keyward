@@ -133,7 +133,7 @@ func TestForget_RemovesOnlyTargetLine(t *testing.T) {
 	path := writeKnownHosts(t, lines)
 
 	// Forget the middle entry (line 2).
-	if err := knownhosts.Forget(path, 2); err != nil {
+	if err := knownhosts.Forget(path, 2, lineAt(t, path, 2)); err != nil {
 		t.Fatalf("Forget: %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestForget_PreservesMode(t *testing.T) {
 	k2 := authorizedKey(t)
 	path := writeKnownHosts(t, []string{"a.example " + k1, "b.example " + k2})
 
-	if err := knownhosts.Forget(path, 1); err != nil {
+	if err := knownhosts.Forget(path, 1, lineAt(t, path, 1)); err != nil {
 		t.Fatalf("Forget: %v", err)
 	}
 	info, err := os.Stat(path)
@@ -185,11 +185,51 @@ func TestForget_Errors(t *testing.T) {
 	k1 := authorizedKey(t)
 	path := writeKnownHosts(t, []string{"a.example " + k1})
 
-	if err := knownhosts.Forget(path, 99); !errors.Is(err, knownhosts.ErrLineOutOfRange) {
+	if err := knownhosts.Forget(path, 99, ""); !errors.Is(err, knownhosts.ErrLineOutOfRange) {
 		t.Errorf("Forget out-of-range = %v, want ErrLineOutOfRange", err)
 	}
 	missing := filepath.Join(t.TempDir(), "nope")
-	if err := knownhosts.Forget(missing, 1); !errors.Is(err, knownhosts.ErrFileNotFound) {
+	if err := knownhosts.Forget(missing, 1, ""); !errors.Is(err, knownhosts.ErrFileNotFound) {
 		t.Errorf("Forget missing = %v, want ErrFileNotFound", err)
+	}
+}
+
+// lineAt returns line n (1-based) of path, as Parse would record it in Entry.Raw.
+func lineAt(t *testing.T, path string, n int) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(string(data), "\n")[n-1]
+}
+
+// Forget acts on a line number taken from an earlier Parse. If the file was
+// rewritten in between (ssh-keygen -R, another keyward), that number may now
+// point at a different host; the entry must be refused, not the neighbour removed.
+func TestForget_RefusesChangedLine(t *testing.T) {
+	b, c := "beta "+authorizedKey(t), "gamma "+authorizedKey(t)
+	path := writeKnownHosts(t, []string{"alpha " + authorizedKey(t), b, c})
+	entries, err := knownhosts.Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gamma := entries[2]
+
+	// Another tool removes alpha: gamma moves from line 3 to line 2.
+	rewritten := []byte(b + "\n" + c + "\n")
+	if err := os.WriteFile(path, rewritten, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := knownhosts.Forget(path, gamma.LineNum, gamma.Raw); !errors.Is(err, knownhosts.ErrEntryChanged) {
+		t.Fatalf("Forget = %v, want ErrEntryChanged", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(rewritten) {
+		t.Fatalf("file modified despite the refusal:\n%q", got)
 	}
 }

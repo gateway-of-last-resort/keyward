@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -25,13 +26,23 @@ func newKnownHostsModel(entries []knownhosts.Entry, sshDir, path string) knownHo
 	return knownHostsModel{entries: entries, sshDir: sshDir, path: path}
 }
 
-// khForgotMsg is emitted after an entry is removed from known_hosts.
-type khForgotMsg struct{ host string }
+// khForgotMsg is emitted after an entry is removed from known_hosts, or when the
+// file changed underneath the screen (err is then ErrEntryChanged and the list
+// must be re-read so the user sees what is actually there).
+type khForgotMsg struct {
+	host string
+	err  error
+}
 
-// forgetHostCmd removes the entry at lineNum from the known_hosts file.
-func forgetHostCmd(path string, lineNum int, host string) tea.Cmd {
+// forgetHostCmd removes entry e from the known_hosts file.
+func forgetHostCmd(path string, e knownhosts.Entry) tea.Cmd {
+	host := khHostLabel(e)
 	return func() tea.Msg {
-		if err := knownhosts.Forget(path, lineNum); err != nil {
+		err := knownhosts.Forget(path, e.LineNum, e.Raw)
+		if errors.Is(err, knownhosts.ErrEntryChanged) {
+			return khForgotMsg{host: host, err: err}
+		}
+		if err != nil {
 			return errMsg{err}
 		}
 		return khForgotMsg{host: host}
@@ -61,8 +72,7 @@ func (m knownHostsModel) update(msg tea.Msg) (knownHostsModel, tea.Cmd) {
 				return m, nil
 			}
 			m.confirmForget = false
-			e := m.entries[m.cursor]
-			return m, forgetHostCmd(m.path, e.LineNum, khHostLabel(e))
+			return m, forgetHostCmd(m.path, m.entries[m.cursor])
 		case "esc":
 			if m.confirmForget {
 				m.confirmForget = false

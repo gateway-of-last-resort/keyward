@@ -530,6 +530,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.knownHosts.cursor = cursor
 		m = m.propagateSize()
+		if msg.err != nil {
+			m.err = fmt.Errorf("%s not forgotten: %w; the list was reloaded", msg.host, msg.err)
+			m.errToken++
+			return m, clearErrAfter(m.errToken)
+		}
 		return m, nil
 
 	case backupResultMsg:
