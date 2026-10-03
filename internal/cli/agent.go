@@ -144,7 +144,7 @@ func cmdAgentList(args []string, stdout, stderr io.Writer) int {
 		if loaded[k.Fingerprint] {
 			mark = "✓ "
 		}
-		fmt.Fprintf(stdout, "%s%-40s %s\n", mark, k.PrivateKeyPath, k.Fingerprint)
+		fmt.Fprintf(stdout, "%s%-40s %s\n", mark, k.IdentityPath(), k.Fingerprint)
 	}
 	return 0
 }

@@ -3,8 +3,12 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gateway-of-last-resort/keyward/internal/keys"
 )
 
 // withTempHome points LoadEnv's home resolution at an empty temp dir for the
@@ -102,5 +106,69 @@ func TestList_JSONEmptyHome(t *testing.T) {
 	}
 	if len(infos) != 0 {
 		t.Errorf("expected no keys in empty home, got %d", len(infos))
+	}
+}
+
+// Keys without a usable private file still have a path: list used to print the
+// empty PrivateKeyPath for them, so a public-only key had "path": "" and an
+// unrecognised private key was shown as an unencrypted one.
+func TestList_KeysWithoutUsablePrivateFile(t *testing.T) {
+	home := t.TempDir()
+	orig := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = orig })
+
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pub := func(name string) {
+		k, err := keys.GenerateKeys(t.TempDir(), keys.GenerateOptions{
+			Algorithm: keys.AlgorithmEd25519, Filename: name, AllowEmptyPassphrase: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(k.PublicKeyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sshDir, name+".pub"), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pub("id_orphan")
+	pub("id_junk")
+	if err := os.WriteFile(filepath.Join(sshDir, "id_junk"), []byte("not a key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := run(t, "list", "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d (stderr: %s)", code, stderr)
+	}
+	var infos []keyInfo
+	if err := json.Unmarshal([]byte(stdout), &infos); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		filepath.Join(sshDir, "id_junk"):       true,
+		filepath.Join(sshDir, "id_orphan.pub"): true,
+	}
+	for _, info := range infos {
+		if !want[info.Path] {
+			t.Errorf("unexpected path %q", info.Path)
+		}
+		delete(want, info.Path)
+	}
+	if len(want) > 0 {
+		t.Errorf("paths missing from list --json: %v", want)
+	}
+
+	_, stdout, _ = run(t, "list")
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.Contains(line, "id_junk") && !strings.Contains(line, "unparsed") {
+			t.Errorf("unrecognised private key not labelled unparsed: %q", line)
+		}
 	}
 }
