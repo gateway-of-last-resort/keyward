@@ -262,26 +262,6 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 
-		dir := filepath.Dir(targetPath)
-		tmp, err := os.CreateTemp(dir, "restore-*.tmp")
-		if err != nil {
-			return errors.Join(ErrRestoreFailed, err, rollback())
-		}
-		tmpPath := tmp.Name()
-
-		if _, err := tmp.Write(fileData); err != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmpPath)
-			return errors.Join(ErrRestoreFailed, err, rollback())
-		}
-		if err := tmp.Close(); err != nil {
-			_ = os.Remove(tmpPath)
-			return errors.Join(ErrRestoreFailed, err, rollback())
-		}
-		if err := os.Rename(tmpPath, targetPath); err != nil {
-			_ = os.Remove(tmpPath)
-			return errors.Join(ErrRestoreFailed, err, rollback())
-		}
 		// Clamp; never trust the archive's mode bits (a restored private key must
 		// not land at 0777). A public half keeps the read bits it was archived
 		// with: 0644 is its normal mode, and restoring it at 0600 narrows the
@@ -290,7 +270,7 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 		if strings.HasSuffix(name, ".pub") {
 			mask = 0644
 		}
-		if err := os.Chmod(targetPath, os.FileMode(header.Mode).Perm()&mask); err != nil {
+		if err := atomicWriteFile(targetPath, fileData, os.FileMode(header.Mode).Perm()&mask); err != nil {
 			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 
