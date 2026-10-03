@@ -5,20 +5,6 @@ import (
 	"strings"
 )
 
-func findBlockIdx(c *Config, pattern string) int {
-	idx := -1
-	for i := range c.Blocks {
-		// Host patterns are matched case-sensitively (OpenSSH semantics), the
-		// same way duplicate detection compares them — so "Foo" and "foo" are
-		// distinct blocks and edits never target the wrong one.
-		if c.Blocks[i].Pattern == pattern {
-			idx = i
-			break
-		}
-	}
-	return idx
-}
-
 func serializeBlock(b *Block) string {
 	var sb strings.Builder
 	for _, token := range b.Tokens {
@@ -57,66 +43,51 @@ func AddBlock(c *Config, pattern string) {
 	c.Modified = true
 }
 
-// RemoveBlock deletes the block matching pattern and sets Modified. Returns false if not found.
-func RemoveBlock(c *Config, pattern string) bool {
-
-	idx := findBlockIdx(c, pattern)
-
-	if idx != -1 {
-		c.Blocks = slices.Delete(c.Blocks, idx, idx+1)
-		c.Modified = true
-		return true
+// RemoveBlock deletes the block at idx and sets Modified. Blocks are addressed
+// by position, not pattern: patterns repeat (two "Host *" blocks are common).
+// Returns false if idx is out of range.
+func RemoveBlock(c *Config, idx int) bool {
+	if idx < 0 || idx >= len(c.Blocks) {
+		return false
 	}
-	return false
+	c.Blocks = slices.Delete(c.Blocks, idx, idx+1)
+	c.Modified = true
+	return true
 }
 
-// DuplicateBlock copies the block matching pattern to a new block with newPattern.
-func DuplicateBlock(c *Config, pattern, newPattern string) bool {
-
-	idx := findBlockIdx(c, pattern)
-
-	if idx != -1 {
-		newPattern = sanitize(newPattern)
-		newBlock := c.Blocks[idx]
-		newBlock.Tokens = append([]Token{}, c.Blocks[idx].Tokens...)
-		newBlock.Pattern = newPattern
-		for i := range newBlock.Tokens {
-			if newBlock.Tokens[i].Type == HOST {
-				newBlock.Tokens[i].Value = newPattern
-				newBlock.Tokens[i].Raw = ""
-			}
+// DuplicateBlock appends a copy of the block at idx with newPattern.
+// Returns false if idx is out of range.
+func DuplicateBlock(c *Config, idx int, newPattern string) bool {
+	if idx < 0 || idx >= len(c.Blocks) {
+		return false
+	}
+	newPattern = sanitize(newPattern)
+	newBlock := c.Blocks[idx]
+	newBlock.Tokens = append([]Token{}, c.Blocks[idx].Tokens...)
+	newBlock.Pattern = newPattern
+	for i := range newBlock.Tokens {
+		if newBlock.Tokens[i].Type == HOST {
+			newBlock.Tokens[i].Value = newPattern
+			newBlock.Tokens[i].Raw = ""
 		}
-		c.Blocks = append(c.Blocks, newBlock)
-		c.Modified = true
-
-		return true
 	}
-
-	return false
+	c.Blocks = append(c.Blocks, newBlock)
+	c.Modified = true
+	return true
 }
 
-// MoveBlock repositions the block matching pattern to toIdx (clamped to valid range).
-func MoveBlock(c *Config, pattern string, toIdx int) bool {
-
-	idx := findBlockIdx(c, pattern)
-
-	if toIdx < 0 {
-		toIdx = 0
+// MoveBlock repositions the block at idx to toIdx (clamped to valid range).
+// Returns false if idx is out of range.
+func MoveBlock(c *Config, idx, toIdx int) bool {
+	if idx < 0 || idx >= len(c.Blocks) {
+		return false
 	}
-	if toIdx > len(c.Blocks)-1 {
-		toIdx = len(c.Blocks) - 1
-	}
-
-	if idx != -1 {
-		movedBlock := c.Blocks[idx]
-		c.Blocks = slices.Delete(c.Blocks, idx, idx+1)
-		c.Blocks = slices.Insert(c.Blocks, toIdx, movedBlock)
-		c.Modified = true
-
-		return true
-	}
-
-	return false
+	toIdx = max(0, min(toIdx, len(c.Blocks)-1))
+	movedBlock := c.Blocks[idx]
+	c.Blocks = slices.Delete(c.Blocks, idx, idx+1)
+	c.Blocks = slices.Insert(c.Blocks, toIdx, movedBlock)
+	c.Modified = true
+	return true
 }
 
 // Search returns blocks whose Pattern, HostName, or User contains query (case-insensitive).

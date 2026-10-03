@@ -1121,6 +1121,23 @@ func TestConfig_AddHost(t *testing.T) { // §8.4
 	}
 }
 
+// Deleting a block must remove the one under the cursor even when another block
+// carries the same pattern; deletion used to look the block up by pattern and
+// remove the first match.
+func TestConfig_DeleteDuplicatePatternBlock(t *testing.T) {
+	cfg := config.ParseBytes("cfg", []byte("Host *\n    User top\n\nHost *\n    User bottom\n"))
+	m := newConfigModel(&cfg, t.TempDir())
+	m, _ = m.update(k("down"))
+	m, _ = m.update(k("d"))
+	m, _ = m.update(k("d"))
+	if len(m.cfg.Blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1", len(m.cfg.Blocks))
+	}
+	if v, _ := config.GetParam(&m.cfg.Blocks[0], "User"); len(v) != 1 || v[0] != "top" {
+		t.Fatalf("remaining block User = %v, want [top]", v)
+	}
+}
+
 func TestConfig_AddParam(t *testing.T) { // §8.6
 	cfg, dir := loadConfig(t)
 	m := newConfigModel(cfg, dir)

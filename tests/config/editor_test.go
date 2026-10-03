@@ -108,9 +108,9 @@ func TestAddBlock_SetsModified(t *testing.T) {
 func TestRemoveBlock_Removes(t *testing.T) {
 	c := threeHostConfig(t)
 
-	removed := config.RemoveBlock(&c, "beta")
+	removed := config.RemoveBlock(&c, 1)
 	if !removed {
-		t.Fatal("RemoveBlock(beta): expected true, got false")
+		t.Fatal("RemoveBlock(1): expected true, got false")
 	}
 	if config.FindBlock(&c, "beta") != nil {
 		t.Error("beta block still exists after RemoveBlock")
@@ -120,12 +120,46 @@ func TestRemoveBlock_Removes(t *testing.T) {
 	}
 }
 
-func TestRemoveBlock_ReturnsFalseWhenMissing(t *testing.T) {
-	c := threeHostConfig(t)
+func TestRemoveBlock_ReturnsFalseOutOfRange(t *testing.T) {
+	for _, idx := range []int{-1, 3, 99} {
+		c := threeHostConfig(t)
+		if config.RemoveBlock(&c, idx) {
+			t.Errorf("RemoveBlock(%d): expected false, got true", idx)
+		}
+		if len(c.Blocks) != 3 || c.Modified {
+			t.Errorf("RemoveBlock(%d) changed the config", idx)
+		}
+	}
+}
 
-	removed := config.RemoveBlock(&c, "nonexistent")
-	if removed {
-		t.Error("RemoveBlock: expected false for missing block, got true")
+// TestBlockOps_DuplicatePatterns verifies that blocks are addressed by index:
+// with two identical "Host *" blocks, acting on the second never touches the first.
+func TestBlockOps_DuplicatePatterns(t *testing.T) {
+	const raw = "Host *\n    User top\n\nHost *\n    User bottom\n"
+	tests := []struct {
+		name  string
+		op    func(c *config.Config) bool
+		users []string
+	}{
+		{"remove second", func(c *config.Config) bool { return config.RemoveBlock(c, 1) }, []string{"top"}},
+		{"remove first", func(c *config.Config) bool { return config.RemoveBlock(c, 0) }, []string{"bottom"}},
+		{"move second up", func(c *config.Config) bool { return config.MoveBlock(c, 1, 0) }, []string{"bottom", "top"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := config.ParseBytes("cfg", []byte(raw))
+			if !tt.op(&c) {
+				t.Fatal("operation returned false")
+			}
+			var users []string
+			for i := range c.Blocks {
+				v, _ := config.GetParam(&c.Blocks[i], "User")
+				users = append(users, v...)
+			}
+			if strings.Join(users, ",") != strings.Join(tt.users, ",") {
+				t.Errorf("User values by block = %v, want %v", users, tt.users)
+			}
+		})
 	}
 }
 
@@ -134,7 +168,7 @@ func TestRemoveBlock_ReturnsFalseWhenMissing(t *testing.T) {
 func TestDuplicateBlock_CreatesIndependentCopy(t *testing.T) {
 	c := threeHostConfig(t)
 
-	ok := config.DuplicateBlock(&c, "alpha", "alpha-copy")
+	ok := config.DuplicateBlock(&c, 0, "alpha-copy")
 	if !ok {
 		t.Fatal("DuplicateBlock: expected true, got false")
 	}
@@ -154,12 +188,12 @@ func TestDuplicateBlock_CreatesIndependentCopy(t *testing.T) {
 	}
 }
 
-func TestDuplicateBlock_ReturnsFalseWhenSourceMissing(t *testing.T) {
+func TestDuplicateBlock_ReturnsFalseOutOfRange(t *testing.T) {
 	c := threeHostConfig(t)
 
-	ok := config.DuplicateBlock(&c, "nonexistent", "copy")
+	ok := config.DuplicateBlock(&c, 3, "copy")
 	if ok {
-		t.Error("DuplicateBlock: expected false for missing source, got true")
+		t.Error("DuplicateBlock: expected false for out-of-range index, got true")
 	}
 }
 
@@ -168,7 +202,7 @@ func TestDuplicateBlock_ReturnsFalseWhenSourceMissing(t *testing.T) {
 func TestMoveBlock_MovesToIndex(t *testing.T) {
 	c := threeHostConfig(t)
 	// Blocks: [alpha, beta, gamma]. Move gamma to index 0.
-	ok := config.MoveBlock(&c, "gamma", 0)
+	ok := config.MoveBlock(&c, 2, 0)
 	if !ok {
 		t.Fatal("MoveBlock: expected true")
 	}
@@ -181,7 +215,7 @@ func TestMoveBlock_ClampsToBounds(t *testing.T) {
 	c := threeHostConfig(t)
 
 	// Index 999 should clamp to last position.
-	ok := config.MoveBlock(&c, "alpha", 999)
+	ok := config.MoveBlock(&c, 0, 999)
 	if !ok {
 		t.Fatal("MoveBlock: expected true")
 	}
@@ -271,7 +305,7 @@ func TestDiff_Modified(t *testing.T) {
 
 func TestDiff_Removed(t *testing.T) {
 	c := threeHostConfig(t)
-	config.RemoveBlock(&c, "gamma")
+	config.RemoveBlock(&c, 2)
 
 	diffs := config.Diff(&c)
 	if !containsSubstr(diffs, "gamma") {
@@ -293,7 +327,7 @@ func TestDiff_EmptyWhenUnchanged(t *testing.T) {
 func TestReset_RestoresBlocks(t *testing.T) {
 	c := threeHostConfig(t)
 
-	config.RemoveBlock(&c, "beta")
+	config.RemoveBlock(&c, 1)
 	config.AddBlock(&c, "injected")
 
 	config.Reset(&c)
@@ -334,11 +368,11 @@ func TestFindBlock_CaseSensitive(t *testing.T) {
 		t.Errorf("FindBlock(foo) returned the wrong block; User = %v", vals)
 	}
 
-	if !config.RemoveBlock(&c, "foo") {
-		t.Fatal("RemoveBlock(foo) = false")
+	if !config.RemoveBlock(&c, 1) {
+		t.Fatal("RemoveBlock(1) = false")
 	}
 	if config.FindBlock(&c, "foo") != nil {
-		t.Error("foo should be gone after RemoveBlock(foo)")
+		t.Error("foo should be gone after removing its block")
 	}
 	if config.FindBlock(&c, "Foo") == nil {
 		t.Error("Foo must remain after removing foo")

@@ -280,8 +280,7 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 						m.confirmDeleteBlock = true
 					} else {
 						m.confirmDeleteBlock = false
-						pattern := m.cfg.Blocks[m.blockCursor].Pattern
-						config.RemoveBlock(m.cfg, pattern)
+						config.RemoveBlock(m.cfg, m.blockCursor)
 						if m.blockCursor >= len(m.cfg.Blocks) && m.blockCursor > 0 {
 							m.blockCursor--
 						}
