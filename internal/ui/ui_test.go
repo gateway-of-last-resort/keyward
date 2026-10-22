@@ -1688,33 +1688,37 @@ func TestStatus_SuccessReplacesError(t *testing.T) {
 
 // ── §9 backup restore bounds ────────────────────────────────────────────────
 
-// §9.5 — out-of-range restore selection reports an error, never crashes.
-func TestBackup_RestoreBounds(t *testing.T) {
+// Restore acts on the backup under the cursor; the list shows no numbers and
+// marks the selected row with the accent bar like every other list.
+func TestBackup_RestoreUsesCursor(t *testing.T) {
 	vaultDir := t.TempDir()
 	backupsDir := filepath.Join(vaultDir, "backups")
 	if err := writeDummyBackups(backupsDir, "a.tar.age", "b.tar.age"); err != nil {
 		t.Fatal(err)
 	}
 	m := newBackupModel(t.TempDir(), vaultDir, nil)
-	if len(m.backups) != 2 {
-		t.Fatalf("expected 2 backups discovered; got %d", len(m.backups))
+	m.width, m.height = 80, 20
+	m, _ = m.update(k("down"))
+
+	view := m.view()
+	if strings.Contains(view, "1.") || strings.Contains(view, "2.") {
+		t.Errorf("backup list should not be numbered:\n%s", view)
 	}
-	m, _ = m.update(k("r")) // enter restore prompt
-	if m.promptStep != stepRestore {
-		t.Fatalf("expected stepRestore; got %v", m.promptStep)
-	}
-	for _, bad := range []string{"0", "99"} {
-		mm := m
-		mm.confirmInput.SetValue(bad)
-		mm, _ = mm.update(k("enter"))
-		if !strings.Contains(mm.inputErr, "between 1 and 2") {
-			t.Fatalf("restore %q: inputErr=%q", bad, mm.inputErr)
+	selected := filepath.Base(m.backups[1])
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, selected) && !strings.HasPrefix(line, "▎") {
+			t.Errorf("selected backup row lacks the accent bar: %q", line)
 		}
+	}
+
+	m, cmd := m.update(k("r"))
+	if cmd != nil || m.promptStep != stepConfirm || m.restoreTarget != m.backups[1] {
+		t.Fatalf("r should ask to confirm the selected backup; step=%v target=%q", m.promptStep, m.restoreTarget)
 	}
 }
 
-// Restore must not touch ~/.ssh without an explicit confirmation. A valid
-// selection lands on stepConfirm; only "y" proceeds, anything else cancels.
+// Restore must not touch ~/.ssh without an explicit confirmation: r lands on
+// stepConfirm; only "y" proceeds, anything else cancels.
 func TestBackup_RestoreRequiresConfirmation(t *testing.T) {
 	vaultDir := t.TempDir()
 	backupsDir := filepath.Join(vaultDir, "backups")
@@ -1722,11 +1726,9 @@ func TestBackup_RestoreRequiresConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := newBackupModel(t.TempDir(), vaultDir, nil)
-	m, _ = m.update(k("r"))
-	m.confirmInput.SetValue("1")
-	m, cmd := m.update(k("enter"))
+	m, cmd := m.update(k("r"))
 
-	// Selecting a backup must NOT immediately restore: it asks to confirm.
+	// r must NOT restore straight away: it asks to confirm.
 	if m.promptStep != stepConfirm {
 		t.Fatalf("expected stepConfirm after selection; got %v", m.promptStep)
 	}

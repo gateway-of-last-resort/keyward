@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"filippo.io/age"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/gateway-of-last-resort/keyward/internal/storage"
@@ -22,9 +21,7 @@ type backupModel struct {
 	vaultDir      string
 	identity      age.Identity
 
-	confirmInput textinput.Model
-	promptStep   backupStep
-	inputErr     string // validation error for the restore-number input
+	promptStep backupStep
 
 	backups       []string // list of existing backup files
 	cursor        int      // selected backup index
@@ -37,7 +34,6 @@ type backupStep int
 const (
 	stepIdle    backupStep = iota // showing menu
 	stepConfirm                   // prompting for restore confirmation
-	stepRestore                   // prompting which backup to restore (number)
 )
 
 func (m backupModel) hints() string {
@@ -45,8 +41,6 @@ func (m backupModel) hints() string {
 	switch m.promptStep {
 	case stepConfirm:
 		return "y  confirm restore  ·  n / esc  cancel"
-	case stepRestore:
-		return "enter  restore  ·  esc  cancel"
 	default:
 		if m.confirmDelete {
 			return "d  confirm delete  ·  esc  cancel"
@@ -56,15 +50,11 @@ func (m backupModel) hints() string {
 }
 
 func newBackupModel(sshDir, vaultDir string, identity age.Identity) backupModel {
-	ci := textinput.New()
-	ci.Placeholder = "select backup to restore (number)"
-
 	return backupModel{
-		sshDir:       sshDir,
-		vaultDir:     vaultDir,
-		identity:     identity,
-		confirmInput: ci,
-		backups:      listBackups(vaultDir),
+		sshDir:   sshDir,
+		vaultDir: vaultDir,
+		identity: identity,
+		backups:  listBackups(vaultDir),
 	}
 }
 
@@ -78,14 +68,11 @@ func (m backupModel) update(msg tea.Msg) (backupModel, tea.Cmd) {
 	case backupResultMsg:
 		return m.handleResult(msg), nil
 	case tea.KeyMsg:
-		m.inputErr = ""
 		switch m.promptStep {
 		case stepIdle:
 			return m.updateIdle(msg)
 		case stepConfirm:
 			return m.updateConfirm(msg)
-		case stepRestore:
-			return m.updateRestore(msg)
 		}
 	}
 	return m, nil
@@ -112,9 +99,11 @@ func (m backupModel) updateIdle(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 		if len(m.backups) == 0 {
 			return m, showStatus(statusNotice, "no backups found in "+filepath.Join(m.vaultDir, "backups"))
 		}
-		m.promptStep = stepRestore
-		m.confirmInput.SetValue("")
-		m.confirmInput.Focus()
+		// Restore overwrites files in ~/.ssh irreversibly, so it always asks
+		// to confirm the backup under the cursor first.
+		m.confirmDelete = false
+		m.restoreTarget = m.backups[m.cursor]
+		m.promptStep = stepConfirm
 	case "d":
 		if len(m.backups) > 0 {
 			if !m.confirmDelete {
@@ -139,33 +128,6 @@ func (m backupModel) updateIdle(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 		}
 	}
 	return m, nil
-}
-
-func (m backupModel) updateRestore(msg tea.KeyMsg) (backupModel, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.promptStep = stepIdle
-		return m, nil
-	case "enter":
-		choice := strings.TrimSpace(m.confirmInput.Value())
-		if choice == "" {
-			m.promptStep = stepIdle
-			return m, nil
-		}
-		var idx int
-		if _, err := fmt.Sscanf(choice, "%d", &idx); err != nil || idx < 1 || idx > len(m.backups) {
-			m.inputErr = fmt.Sprintf("enter a number between 1 and %d", len(m.backups))
-			return m, nil
-		}
-		// Restore overwrites files in ~/.ssh irreversibly, so require an
-		// explicit confirmation before touching anything.
-		m.restoreTarget = m.backups[idx-1]
-		m.promptStep = stepConfirm
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.confirmInput, cmd = m.confirmInput.Update(msg)
-	return m, cmd
 }
 
 // updateConfirm handles the restore confirmation prompt. Only an explicit "y"
@@ -241,29 +203,22 @@ func (m backupModel) view() string {
 
 	sb.WriteString(sectionHeaderStyle.Width(m.width).Render("Backup / Restore") + "\n\n")
 
-	// existing backups list
-	if len(m.backups) > 0 {
-		sb.WriteString(labelStyle.Render("Backups") + "\n")
-		for i, b := range m.backups {
-			line := fmt.Sprintf("  %d.  %s", i+1, filepath.Base(b))
-			if m.promptStep == stepIdle && i == m.cursor {
-				sb.WriteString(activeBlockStyle.Render(line) + "\n")
-			} else {
-				sb.WriteString(line + "\n")
-			}
-		}
-		sb.WriteString("\n")
-	} else {
-		sb.WriteString(dimStyle.Render("  no backups found") + "\n\n")
+	if len(m.backups) == 0 {
+		sb.WriteString(dimStyle.Render("  no backups found") + "\n")
+		return sb.String()
 	}
-
-	if m.promptStep == stepRestore {
-		sb.WriteString(labelStyle.Render("Restore #") + "  " + m.confirmInput.View() + "\n")
-		if m.inputErr != "" {
-			sb.WriteString("\n  " + formErrorStyle.Render("✗  "+m.inputErr) + "\n")
+	sb.WriteString(" " + labelStyle.Render("Backups") + "\n")
+	// Rows pad to the full width so the selection fill spans the line, like the
+	// other lists.
+	rowWidth := max(m.width-2, 1)
+	for i, b := range m.backups {
+		name := fmt.Sprintf("%-*s", rowWidth, filepath.Base(b))
+		if i == m.cursor {
+			sb.WriteString(selectedRow(name) + "\n")
+		} else {
+			sb.WriteString("  " + name + "\n")
 		}
 	}
-
 	return sb.String()
 }
 
