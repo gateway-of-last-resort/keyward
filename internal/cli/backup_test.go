@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -87,5 +88,34 @@ func TestBackup_OutCopiesArchive(t *testing.T) {
 	}
 	if _, err := os.Stat(out); err != nil {
 		t.Fatalf("--out archive not written: %v", err)
+	}
+}
+
+// --out over an existing file must leave the archive at 0600, not at the old
+// file's mode: os.WriteFile only applies its perm when it creates the file.
+func TestBackup_OutResetsMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are synthetic on Windows")
+	}
+	home := setupVault(t, "pw")
+	t.Setenv("KEYWARD_PASSWORD", "pw")
+	out := filepath.Join(home, "external.tar.age")
+	if err := os.WriteFile(out, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := Run("v", []string{"backup", "--out", out}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d (stderr: %s)", code, stderr.String())
+	}
+	fi, err := os.Stat(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("--out archive mode = %04o, want 0600", got)
 	}
 }
