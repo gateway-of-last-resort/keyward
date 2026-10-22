@@ -493,6 +493,24 @@ func TestDetail_AgentAndRotateRequireUsablePrivateKey(t *testing.T) {
 	}
 }
 
+// The agent passphrase must not stay in the model once it has been handed to the
+// add-to-agent command (or the prompt was cancelled).
+func TestDetail_AgentPassphraseClearedFromModel(t *testing.T) {
+	key := keys.Key{
+		PrivateKeyPath: "/ssh/id_ok", PublicKeyPath: "/ssh/id_ok.pub",
+		Algorithm: "ssh-ed25519", Fingerprint: "SHA256:ok", HasPassphrase: true,
+	}
+	for _, last := range []string{"enter", "esc"} {
+		m := newKeyDetailModel(key, nil, nil, false)
+		m, _ = m.update(k("A"))
+		m, _ = m.update(k("secret-pass"))
+		m, _ = m.update(k(last))
+		if got := m.agentPass.Value(); got != "" {
+			t.Errorf("after %s the prompt still holds %q", last, got)
+		}
+	}
+}
+
 // TestKeyMetaUpdated_MatchesByIdentity: the handler used to find the edited key by
 // raw PrivateKeyPath, so two keys without one both matched the first entry and the
 // detail screen was rebuilt from the wrong key.

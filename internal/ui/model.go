@@ -279,6 +279,7 @@ func refreshAgentCmd() tea.Cmd {
 // addToAgentCmd loads key into the ssh-agent, decrypting with passphrase if set.
 func addToAgentCmd(key keys.Key, passphrase []byte) tea.Cmd {
 	return func() tea.Msg {
+		defer crypto.ZeroBytes(passphrase)
 		pem, err := os.ReadFile(key.PrivateKeyPath)
 		if err != nil {
 			return errMsg{err}

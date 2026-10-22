@@ -219,6 +219,7 @@ func (m keyDetailModel) updateAgentPrompt(msg tea.KeyMsg) (keyDetailModel, tea.C
 	case "esc":
 		m.addingAgent = false
 		m.agentPassErr = ""
+		m.agentPass.SetValue("")
 		return m, nil
 	case "enter":
 		pass := m.agentPass.Value()
@@ -227,6 +228,9 @@ func (m keyDetailModel) updateAgentPrompt(msg tea.KeyMsg) (keyDetailModel, tea.C
 			return m, nil
 		}
 		m.addingAgent = false
+		// Drop the plaintext from the model now, as the rotation form does; the
+		// command owns its own copy and zeroes it.
+		m.agentPass.SetValue("")
 		return m, addToAgentCmd(m.key, []byte(pass))
 	}
 	var cmd tea.Cmd
