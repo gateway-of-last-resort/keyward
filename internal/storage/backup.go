@@ -4,7 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,52 +29,80 @@ type BackupResult struct {
 }
 
 func CreateBackup(sshDir, vaultDir string, identity age.Identity) (BackupResult, error) {
-	skipFiles := map[string]bool{
-		"known_hosts":     true,
-		"authorized_keys": true,
-	}
-
 	type archiveEntry struct {
 		path    string
 		tarName string
 	}
 
-	entries, err := os.ReadDir(sshDir)
-	if err != nil {
+	if fi, err := os.Stat(sshDir); err != nil || !fi.IsDir() {
 		return BackupResult{}, ErrBackupFailed
 	}
 
 	var files []archiveEntry
-	for _, entry := range entries {
-		if entry.IsDir() || skipFiles[entry.Name()] {
-			continue
+	var skipped []string
+	walkErr := filepath.WalkDir(sshDir, func(path string, d fs.DirEntry, err error) error {
+		if path == sshDir {
+			return err
 		}
-		files = append(files, archiveEntry{
-			path:    filepath.Join(sshDir, entry.Name()),
-			tarName: entry.Name(),
-		})
+		rel, relErr := filepath.Rel(sshDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		tarName := filepath.ToSlash(rel)
+		if err != nil {
+			skipped = append(skipped, tarName)
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		topLevel := !strings.Contains(tarName, "/")
+
+		switch {
+		case d.IsDir():
+			// A top-level .keyward would collide with the prefix restore uses
+			// for vault files.
+			if topLevel && tarName == defaultDir {
+				skipped = append(skipped, tarName)
+				return fs.SkipDir
+			}
+			return nil
+		case d.Type()&fs.ModeSymlink != 0:
+			// A link to a file is archived by content, as before; a link to a
+			// directory is not followed, so a loop can't recurse forever.
+			if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+				skipped = append(skipped, tarName)
+				return nil
+			}
+		case !d.Type().IsRegular():
+			// Sockets (ControlMaster) and FIFOs carry no data, and reading a
+			// FIFO would block the backup.
+			return nil
+		}
+		if topLevel && (tarName == "known_hosts" || tarName == "authorized_keys") {
+			return nil
+		}
+		files = append(files, archiveEntry{path: path, tarName: tarName})
+		return nil
+	})
+	if walkErr != nil {
+		return BackupResult{}, ErrBackupFailed
 	}
 
 	metaPath := filepath.Join(vaultDir, metadataFile)
-	if _, err := os.Stat(metaPath); err == nil {
-		files = append(files, archiveEntry{
-			path:    metaPath,
-			tarName: defaultDir + "/" + metadataFile,
-		})
-	}
+	files = append(files, archiveEntry{
+		path:    metaPath,
+		tarName: defaultDir + "/" + metadataFile,
+	})
 
 	tarBuffer := new(bytes.Buffer)
 	tarWriter := tar.NewWriter(tarBuffer)
 
-	var skipped []string
 	for _, f := range files {
-		data, err := os.ReadFile(f.path)
-		if err != nil {
-			skipped = append(skipped, f.tarName)
+		data, stat, err := readForBackup(f.path, f.path == metaPath)
+		if errors.Is(err, os.ErrNotExist) && f.path == metaPath {
 			continue
 		}
-
-		stat, err := os.Stat(f.path)
 		if err != nil {
 			skipped = append(skipped, f.tarName)
 			continue
@@ -115,10 +145,12 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (BackupResult,
 		return BackupResult{}, ErrBackupFailed
 	}
 
-	filename := time.Now().Format("2006-01-02_15-04-05") + ".tar.age"
-	finalPath := filepath.Join(backupPath, filename)
-
+	finalPath, err := reserveName(backupPath, time.Now().Format("2006-01-02_15-04-05"), ".tar.age")
+	if err != nil {
+		return BackupResult{}, ErrBackupFailed
+	}
 	if err := atomicWriteFile(finalPath, ciphertext, 0600); err != nil {
+		_ = os.Remove(finalPath)
 		return BackupResult{}, ErrBackupFailed
 	}
 
@@ -129,7 +161,49 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (BackupResult,
 	return BackupResult{Path: finalPath, Skipped: skipped, PruneErr: pruneErr}, nil
 }
 
+// readForBackup reads a file and its mode for archiving. The metadata file is
+// read under metaMu so a concurrent Save can't leave it momentarily absent.
+func readForBackup(path string, isMeta bool) ([]byte, os.FileInfo, error) {
+	if isMeta {
+		metaMu.Lock()
+		defer metaMu.Unlock()
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	stat, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, stat, nil
+}
+
 const maxBackups = 5
+
+// reserveName creates an empty placeholder at dir/stem+ext, or at stem_01+ext,
+// stem_02+ext, ... if that is taken, and returns its path. Names have one-second
+// resolution, so two backups in the same second used to overwrite each other.
+// The "_NN" suffix sorts after the bare name, keeping name order chronological
+// for pruning and listing.
+func reserveName(dir, stem, ext string) (string, error) {
+	for i := 0; i < 100; i++ {
+		name := stem + ext
+		if i > 0 {
+			name = fmt.Sprintf("%s_%02d%s", stem, i, ext)
+		}
+		path := filepath.Join(dir, name)
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return path, f.Close()
+	}
+	return "", fmt.Errorf("no free name for %s%s in %s", stem, ext, dir)
+}
 
 const (
 	// maxBackupSize caps the encrypted archive we buffer into memory on restore.
@@ -182,6 +256,11 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 	}
 	defer crypto.ZeroBytes(plaintext)
 
+	// Restore can overwrite metadata.age; hold metaMu so it never interleaves
+	// with a background Save of the in-memory store.
+	metaMu.Lock()
+	defer metaMu.Unlock()
+
 	tarReader := tar.NewReader(bytes.NewReader(plaintext))
 
 	for {
@@ -193,6 +272,11 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 			return ErrRestoreFailed
 		}
 
+		// Keyward only ever archives regular files. A directory or link entry
+		// would otherwise be written out as an empty file over the real one.
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
 		if header.Size < 0 || header.Size > maxRestoreFileSize {
 			return ErrRestoreFailed
 		}
@@ -215,10 +299,11 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 		targetPath := filepath.Join(base, filepath.FromSlash(rel))
 
 		// Containment guard: filepath.Join resolves ".." components, so if the
-		// result escapes base it's a path-traversal attempt — skip it. This
-		// replaces the fragile strings.Contains(name, "..") check.
+		// result escapes base it's a path-traversal attempt; skip it. An entry
+		// that resolves to base itself ("." or ".keyward/") is skipped too: it
+		// would move the whole ~/.ssh or vault directory aside and put a file there.
 		cleanBase := filepath.Clean(base)
-		if targetPath != cleanBase && !strings.HasPrefix(targetPath, cleanBase+string(os.PathSeparator)) {
+		if !strings.HasPrefix(targetPath, cleanBase+string(os.PathSeparator)) {
 			continue
 		}
 
@@ -244,26 +329,6 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 
-		dir := filepath.Dir(targetPath)
-		tmp, err := os.CreateTemp(dir, "restore-*.tmp")
-		if err != nil {
-			return errors.Join(ErrRestoreFailed, err, rollback())
-		}
-		tmpPath := tmp.Name()
-
-		if _, err := tmp.Write(fileData); err != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmpPath)
-			return errors.Join(ErrRestoreFailed, err, rollback())
-		}
-		if err := tmp.Close(); err != nil {
-			_ = os.Remove(tmpPath)
-			return errors.Join(ErrRestoreFailed, err, rollback())
-		}
-		if err := os.Rename(tmpPath, targetPath); err != nil {
-			_ = os.Remove(tmpPath)
-			return errors.Join(ErrRestoreFailed, err, rollback())
-		}
 		// Clamp; never trust the archive's mode bits (a restored private key must
 		// not land at 0777). A public half keeps the read bits it was archived
 		// with: 0644 is its normal mode, and restoring it at 0600 narrows the
@@ -272,7 +337,7 @@ func RestoreBackup(backupPath, sshDir, vaultDir string, identity age.Identity) e
 		if strings.HasSuffix(name, ".pub") {
 			mask = 0644
 		}
-		if err := os.Chmod(targetPath, os.FileMode(header.Mode).Perm()&mask); err != nil {
+		if err := atomicWriteFile(targetPath, fileData, os.FileMode(header.Mode).Perm()&mask); err != nil {
 			return errors.Join(ErrRestoreFailed, err, rollback())
 		}
 

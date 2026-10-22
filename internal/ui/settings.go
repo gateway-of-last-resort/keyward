@@ -3,12 +3,14 @@ package ui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/gateway-of-last-resort/keyward/internal/keys"
 	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
@@ -40,9 +42,7 @@ type settingsModel struct {
 	sshDirInput   textinput.Model
 	editingSSHDir bool
 
-	statusMsg string
-	isError   bool
-	formErr   error
+	formErr error
 }
 
 // settingsPasswordChangedMsg is emitted on successful password change.
@@ -50,8 +50,6 @@ type settingsPasswordChangedMsg struct{}
 
 // settingsSSHDirChangedMsg is emitted when the user saves a new SSH dir path.
 type settingsSSHDirChangedMsg struct{ sshDir string }
-
-var settingsOKStyle = lipgloss.NewStyle().Foreground(colGreen)
 
 func (m settingsModel) hints() string {
 	nav := "tab / shift+tab  switch screens"
@@ -120,10 +118,8 @@ func (m settingsModel) update(msg tea.Msg) (settingsModel, tea.Cmd) {
 
 	case settingsPasswordChangedMsg:
 		m.step = settingsMenu
-		m.statusMsg = "master password changed"
-		m.isError = false
 		m = m.clearPassInputs()
-		return m, nil
+		return m, showStatus(statusSuccess, "master password changed")
 
 	case tea.KeyMsg:
 		m.formErr = nil
@@ -154,7 +150,6 @@ func (m settingsModel) updateMenu(msg tea.KeyMsg) (settingsModel, tea.Cmd) {
 			m.cursor++
 		}
 	case "enter":
-		m.statusMsg = ""
 		switch m.cursor {
 		case 0:
 			m.step = settingsChangePass
@@ -214,6 +209,11 @@ func (m settingsModel) updateEditSSHDir(msg tea.KeyMsg) (settingsModel, tea.Cmd)
 		newDir := strings.TrimSpace(m.sshDirInput.Value())
 		if newDir == "" {
 			m.formErr = fmt.Errorf("SSH directory must not be empty")
+			return m, nil
+		}
+		newDir, err := absUserPath(newDir)
+		if err != nil {
+			m.formErr = fmt.Errorf("cannot use directory: %w", err)
 			return m, nil
 		}
 		// Validate before committing: an unreadable or non-directory path
@@ -354,16 +354,6 @@ func (m settingsModel) view() string {
 		sb.WriteString(m.viewChangePass())
 	}
 
-	if m.statusMsg != "" && m.step == settingsMenu && !m.editingSSHDir {
-		style := settingsOKStyle
-		if m.isError {
-			style = formErrorStyle
-		}
-		sb.WriteString("\n  ")
-		sb.WriteString(style.Render(m.statusMsg))
-		sb.WriteString("\n")
-	}
-
 	return sb.String()
 }
 
@@ -433,4 +423,12 @@ func (m settingsModel) viewChangePass() string {
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// absUserPath expands a leading ~ and makes p absolute. The TUI has no shell to
+// expand ~, and the SSH dir is saved to prefs and read back at the next start
+// from whatever directory keyward is launched in, so a relative path would
+// silently point somewhere else.
+func absUserPath(p string) (string, error) {
+	return filepath.Abs(keys.ExpandTilde(p))
 }

@@ -27,7 +27,6 @@ type keyDetailModel struct {
 	key           keys.Key
 	findings      []audit.AuditResult
 	meta          *storage.KeyMetadata
-	copied        bool
 	confirmDelete bool
 
 	// rotation form
@@ -90,7 +89,6 @@ var (
 
 	detailValueStyle = lipgloss.NewStyle().Foreground(colText)
 
-	copiedStyle  = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
 	warnMsgStyle = lipgloss.NewStyle().Foreground(colYellow).Bold(true)
 
 	tagSelectedStyle = lipgloss.NewStyle().Foreground(ColorMint).Bold(true)
@@ -123,8 +121,34 @@ func (m keyDetailModel) hints() string {
 	case m.confirmDelete:
 		return "d  confirm delete  ·  esc  cancel"
 	default:
+		if !m.canRotate() {
+			return "c copy pubkey  ·  e edit  ·  A add to agent  ·  d delete  ·  esc back"
+		}
 		return "c copy pubkey  ·  e edit  ·  A add to agent  ·  r rotate  ·  d delete  ·  esc back"
 	}
+}
+
+// confirmPrompt is the pending delete question, shown in the message area; the
+// keys that answer it are in the hints right below.
+func (m keyDetailModel) confirmPrompt() string {
+	if !m.confirmDelete {
+		return ""
+	}
+	// Name the unrecognised file: nothing else on this screen shows it, so the
+	// user would not know it is about to be removed.
+	what := "delete key files?"
+	if m.key.UnparsedPrivatePath != "" {
+		what = "delete key files, including the unrecognized " +
+			safeDisplay(filepath.Base(m.key.UnparsedPrivatePath)) + "?"
+	}
+	return what
+}
+
+// canRotate reports whether rotation can run for this key: RotateKey needs a
+// usable private file, and GenerateKeys only produces Ed25519 and RSA, so an
+// ECDSA, DSA or security-key pair would fail every time.
+func (m keyDetailModel) canRotate() bool {
+	return m.key.PrivateKeyPath != "" && keys.Algorithm(m.key.Algorithm).IsValid()
 }
 
 func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
@@ -139,7 +163,6 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 		if m.addingAgent {
 			return m.updateAgentPrompt(msg)
 		}
-		m.copied = false
 		switch msg.String() {
 		case "e":
 			if !m.confirmDelete && m.key.Fingerprint != "" {
@@ -151,9 +174,9 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 				pubPath = m.key.PrivateKeyPath + ".pub"
 			}
 			if err := copyPubKey(pubPath); err != nil {
-				return m, func() tea.Msg { return errMsg{err} }
+				return m, func() tea.Msg { return errMsg{fmt.Errorf("cannot copy the public key: %w", err)} }
 			}
-			m.copied = true
+			return m, showStatus(statusSuccess, "public key copied to clipboard")
 		case "A":
 			// A public-only or unrecognised key has a fingerprint (read off the .pub)
 			// but no usable private key, so the agent has nothing to load.
@@ -165,8 +188,7 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 			}
 			return m, addToAgentCmd(m.key, nil)
 		case "r":
-			// keys.RotateKey rejects an empty private path, so refuse before the form.
-			if m.key.PrivateKeyPath == "" {
+			if !m.canRotate() {
 				break
 			}
 			m.confirmDelete = false
@@ -210,6 +232,7 @@ func (m keyDetailModel) updateAgentPrompt(msg tea.KeyMsg) (keyDetailModel, tea.C
 	case "esc":
 		m.addingAgent = false
 		m.agentPassErr = ""
+		m.agentPass.SetValue("")
 		return m, nil
 	case "enter":
 		pass := m.agentPass.Value()
@@ -218,6 +241,9 @@ func (m keyDetailModel) updateAgentPrompt(msg tea.KeyMsg) (keyDetailModel, tea.C
 			return m, nil
 		}
 		m.addingAgent = false
+		// Drop the plaintext from the model now, as the rotation form does; the
+		// command owns its own copy and zeroes it.
+		m.agentPass.SetValue("")
 		return m, addToAgentCmd(m.key, []byte(pass))
 	}
 	var cmd tea.Cmd
@@ -487,12 +513,12 @@ func (m keyDetailModel) view() string {
 	var sb strings.Builder
 
 	title := sectionHeaderStyle.Width(m.width).Render(
-		"Key: " + fitLeft(k.IdentityPath(), m.width-10),
+		"Key: " + fitLeft(safeDisplay(k.IdentityPath()), m.width-10),
 	)
 	sb.WriteString(title + "\n\n")
 
 	field := func(lbl, val string) {
-		fmt.Fprintf(&sb, "%s  %s\n",
+		fmt.Fprintf(&sb, " %s  %s\n",
 			detailLabelStyle.Render(lbl),
 			detailValueStyle.Render(val),
 		)
@@ -500,7 +526,7 @@ func (m keyDetailModel) view() string {
 
 	field("Algorithm", k.Algorithm)
 	field("Bit size", fmt.Sprintf("%d", k.BitSize))
-	field("Comment", ifEmpty(k.Comment, "—"))
+	field("Comment", ifEmpty(safeDisplay(k.Comment), "—"))
 	field("Fingerprint", ifEmpty(k.Fingerprint, "—"))
 	// ModifiedAt is only read off a private file that parsed.
 	modified := "—"
@@ -519,14 +545,14 @@ func (m keyDetailModel) view() string {
 	}
 	switch {
 	case k.PrivateKeyPath != "":
-		field("Private path", k.PrivateKeyPath)
+		field("Private path", safeDisplay(k.PrivateKeyPath))
 	case k.UnparsedPrivatePath != "":
-		field("Private path", k.UnparsedPrivatePath+"  "+warnMsgStyle.Render("(not recognized)"))
+		field("Private path", safeDisplay(k.UnparsedPrivatePath)+"  "+warnMsgStyle.Render("(not recognized)"))
 	default:
 		field("Private path", "—")
 	}
 	if k.PublicKeyPath != "" {
-		field("Public path", k.PublicKeyPath)
+		field("Public path", safeDisplay(k.PublicKeyPath))
 	}
 
 	if m.confirmRotate {
@@ -538,7 +564,7 @@ func (m keyDetailModel) view() string {
 		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Add to ssh-agent") + "\n\n")
 		fmt.Fprintf(&sb, "%s%s  %s\n", rowGutter(true), detailLabelStyle.Render("Passphrase"), m.agentPass.View())
 		if m.agentPassErr != "" {
-			sb.WriteString("\n" + warnMsgStyle.Render(m.agentPassErr))
+			sb.WriteString("\n" + formErrorStyle.Render("  ✗  "+m.agentPassErr))
 		}
 		return sb.String()
 	}
@@ -562,7 +588,7 @@ func (m keyDetailModel) view() string {
 			field("Tags", dimStyle.Render("none"))
 		}
 		if m.meta.Note != "" {
-			const labelWidth = 18 + 2 // detailLabelStyle.Width + separator
+			const labelWidth = 1 + 18 + 2 // gutter + detailLabelStyle.Width + separator
 			const rightMargin = 30
 			wrapWidth := m.width - labelWidth - rightMargin
 			lines := wrapText(m.meta.Note, wrapWidth)
@@ -584,23 +610,9 @@ func (m keyDetailModel) view() string {
 			s := severityStyle[f.Severity]
 			fmt.Fprintf(&sb, "  %s  %s\n", s.Render(fmt.Sprintf("%-8s", string(f.Severity))), f.Message)
 			if f.Fix != "" {
-				fmt.Fprintf(&sb, "            %s\n", dimStyle.Render("fix: "+f.Fix))
+				fmt.Fprintf(&sb, "            %s\n", dimStyle.Render("fix: "+safeDisplay(f.Fix)))
 			}
 		}
-	}
-
-	switch {
-	case m.copied:
-		sb.WriteString("\n" + copiedStyle.Render("✓ public key copied to clipboard"))
-	case m.confirmDelete:
-		// Name the unrecognised file: until now nothing on this screen showed it,
-		// so the user would not know it is about to be removed.
-		prompt := "delete key files?"
-		if k.UnparsedPrivatePath != "" {
-			prompt = "delete key files, including the unrecognized " +
-				filepath.Base(k.UnparsedPrivatePath) + "?"
-		}
-		sb.WriteString("\n" + warnMsgStyle.Render(prompt+" press d again to confirm · esc to cancel"))
 	}
 
 	return sb.String()

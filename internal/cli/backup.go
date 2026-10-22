@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gateway-of-last-resort/keyward/internal/config"
 	"github.com/gateway-of-last-resort/keyward/internal/storage"
 	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
@@ -93,11 +94,12 @@ func resolvePassword(stderr io.Writer) ([]byte, error) {
 	return readPassword("Master password: ", stderr)
 }
 
-// copyToOut copies the age-encrypted backup to dst with 0600 permissions.
+// copyToOut copies the age-encrypted backup to dst atomically and durably, at
+// 0600 even when dst already existed with a wider mode.
 func copyToOut(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0600)
+	return config.WriteAtomic(dst, data)
 }

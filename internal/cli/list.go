@@ -16,6 +16,7 @@ type keyInfo struct {
 	Comment       string `json:"comment,omitempty"`
 	HasPassphrase bool   `json:"has_passphrase"`
 	PublicOnly    bool   `json:"public_only"`
+	unparsed      bool   // text output only; not part of the JSON contract
 }
 
 // cmdList prints the discovered SSH keys as a text table or JSON.
@@ -40,13 +41,14 @@ func cmdList(args []string, stdout, stderr io.Writer) int {
 	infos := make([]keyInfo, 0, len(env.Keys))
 	for _, k := range env.Keys {
 		infos = append(infos, keyInfo{
-			Path:          k.PrivateKeyPath,
+			Path:          k.IdentityPath(),
 			Fingerprint:   k.Fingerprint,
 			Algorithm:     k.Algorithm,
 			BitSize:       k.BitSize,
 			Comment:       k.Comment,
 			HasPassphrase: k.HasPassphrase,
 			PublicOnly:    k.IsPublicOnly,
+			unparsed:      k.UnparsedPrivatePath != "",
 		})
 	}
 
@@ -77,7 +79,10 @@ func writeKeysText(w io.Writer, infos []keyInfo) {
 		if k.PublicOnly {
 			lock = "public-only"
 		}
+		if k.unparsed {
+			lock = "unparsed"
+		}
 		fmt.Fprintf(w, "%-40s %-12s %5d  %-11s %s\n",
-			k.Path, k.Algorithm, k.BitSize, lock, k.Comment)
+			displaySafe(k.Path), k.Algorithm, k.BitSize, lock, displaySafe(k.Comment))
 	}
 }

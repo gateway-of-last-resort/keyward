@@ -68,6 +68,17 @@ func RotateKey(key Key, opts GenerateOptions) (newKey Key, bakPath string, err e
 		}
 	}
 
+	// The .bak copies must be durable before the live names are replaced, or a
+	// crash could leave neither the old key nor the new one on disk.
+	if err := syncDir(dir); err != nil {
+		cleanup := []error{os.Remove(tmpPriv), os.Remove(tmpPub), os.Remove(privBak)}
+		if oldPub != "" {
+			cleanup = append(cleanup, os.Remove(pubBak))
+		}
+		_ = errors.Join(cleanup...)
+		return Key{}, "", errors.Join(ErrRotateFailed, err)
+	}
+
 	// 3. Move the new pair into the live names. rename replaces the destination,
 	//    so the private key is always present under its name.
 	if err := os.Rename(tmpPriv, livePriv); err != nil {
@@ -85,6 +96,10 @@ func RotateKey(key Key, opts GenerateOptions) (newKey Key, bakPath string, err e
 		_ = os.Remove(tmpPub)
 		return Key{}, "", errors.Join(ErrRotateFailed, ErrRenameFailed, err, rb)
 	}
+
+	// The swap has happened; a failed directory fsync can't undo it, and
+	// reporting failure here would leave the caller tracking the old key.
+	_ = syncDir(dir)
 
 	tmpKey.PrivateKeyPath = livePriv
 	tmpKey.PublicKeyPath = newPub
@@ -107,6 +122,11 @@ func copyFile(src, dst string, perm os.FileMode) error {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := out.Sync(); err != nil {
 		_ = out.Close()
 		_ = os.Remove(dst)
 		return err

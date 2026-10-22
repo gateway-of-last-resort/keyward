@@ -27,6 +27,9 @@ var (
 	ErrReadFailed = errors.New("failed to read known_hosts file")
 	// ErrWriteFailed wraps an underlying write error.
 	ErrWriteFailed = errors.New("failed to write known_hosts file")
+	// ErrEntryChanged is returned by Forget when the line no longer holds the
+	// entry the caller parsed, because the file was rewritten in between.
+	ErrEntryChanged = errors.New("known_hosts changed since it was read")
 )
 
 // Entry is one parsed known_hosts line.
@@ -84,8 +87,10 @@ func Parse(path string) ([]Entry, error) {
 
 // Forget removes the line numbered lineNum (1-based) from path and rewrites the
 // file atomically, preserving its mode. Every other line is kept byte-for-byte,
-// including the file's trailing-newline shape.
-func Forget(path string, lineNum int) error {
+// including the file's trailing-newline shape. raw is the line as Parse returned
+// it (Entry.Raw); if the line now differs, nothing is removed and
+// ErrEntryChanged is returned.
+func Forget(path string, lineNum int, raw string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -103,6 +108,9 @@ func Forget(path string, lineNum int) error {
 	if lineNum < 1 || lineNum > len(lines) {
 		return fmt.Errorf("%w: %d", ErrLineOutOfRange, lineNum)
 	}
+	if lines[lineNum-1] != raw {
+		return fmt.Errorf("%w: line %d", ErrEntryChanged, lineNum)
+	}
 
 	kept := make([]string, 0, len(lines)-1)
 	kept = append(kept, lines[:lineNum-1]...)
@@ -118,6 +126,10 @@ func Forget(path string, lineNum int) error {
 // mirroring internal/storage.atomicWriteFile but honouring the caller's perm so
 // an existing known_hosts keeps its original mode.
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
+	path, err := resolveSymlink(path)
+	if err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
@@ -149,6 +161,16 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return syncDir(dir)
+}
+
+// resolveSymlink returns the file a symlinked path points to, or path itself,
+// so the rename in atomicWrite updates the target instead of replacing the link.
+func resolveSymlink(path string) (string, error) {
+	fi, err := os.Lstat(path)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	return filepath.EvalSymlinks(path)
 }
 
 // syncDir fsyncs a directory so a rename within it is durable. Windows has no

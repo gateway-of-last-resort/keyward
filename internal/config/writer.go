@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,29 +43,41 @@ func renderToken(t Token, inBlock bool, eol string) (text, ending string) {
 
 // Serialize renders the config back to bytes, preserving original raw lines where unchanged.
 func Serialize(c *Config) []byte {
-	eol := dominantEOL(c.Original)
+	return serializeFile(c.Global.Tokens, c.Blocks, c.Original)
+}
+
+// serializeFile renders one file: the tokens before its first Host/Match and
+// its blocks. original is that file's bytes as read, which decide the line
+// ending for rewritten lines and whether the file ends with a newline.
+func serializeFile(global []Token, blocks []Block, original []byte) []byte {
+	eol := dominantEOL(original)
 
 	type line struct{ text, ending string }
-	lines := make([]line, 0, len(c.Global.Tokens))
+	lines := make([]line, 0, len(global))
 
-	for _, token := range c.Global.Tokens {
+	for _, token := range global {
 		text, ending := renderToken(token, false, eol)
 		lines = append(lines, line{text, ending})
 	}
-	for _, block := range c.Blocks {
+	lastEmpty := len(global) > 0 && global[len(global)-1].Type == EMPTY
+	for _, block := range blocks {
 		for _, token := range block.Tokens {
 			text, ending := renderToken(token, true, eol)
 			lines = append(lines, line{text, ending})
+			lastEmpty = token.Type == EMPTY
 		}
 	}
 
-	// The token list already carries the file's trailing newline as a final empty
-	// token, so the last line's ending is dropped rather than trimmed off the
-	// finished string: trimming cannot tell a content '\r' from a CRLF ending.
+	// A file's trailing newline is carried as a final empty token, so the last
+	// line's ending is normally dropped rather than trimmed off the finished
+	// string: trimming cannot tell a content '\r' from a CRLF ending. When edits
+	// leave something else last (a block added or moved to the end), that token
+	// takes the ending instead, so the file keeps ending with a newline.
+	keepFinal := !lastEmpty && (len(original) == 0 || bytes.HasSuffix(original, []byte("\n")))
 	var sb strings.Builder
 	for i, l := range lines {
 		sb.WriteString(l.text)
-		if i < len(lines)-1 {
+		if i < len(lines)-1 || keepFinal {
 			sb.WriteString(l.ending)
 		}
 	}
@@ -72,8 +85,13 @@ func Serialize(c *Config) []byte {
 }
 
 // WriteAtomic writes data to path via a temp file + rename, then sets permissions to 0600.
+// A symlinked path is written through to its target, so the link survives.
 func WriteAtomic(path string, data []byte) error {
 
+	path, err := resolveSymlink(path)
+	if err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 
 	tempFile, err := os.CreateTemp(dir, "temp.*.atom")
@@ -119,6 +137,18 @@ func WriteAtomic(path string, data []byte) error {
 	return d.Sync()
 }
 
+// resolveSymlink returns the file a symlinked path points to, or path itself.
+// The rename in an atomic write replaces whatever sits at its destination, so
+// writing to the link's own path would swap a dotfiles-managed symlink (stow,
+// chezmoi, home-manager) for a regular file and leave its source untouched.
+func resolveSymlink(path string) (string, error) {
+	fi, err := os.Lstat(path)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	return filepath.EvalSymlinks(path)
+}
+
 func backup(path string) error {
 
 	data, err := os.ReadFile(path)
@@ -145,10 +175,39 @@ func backup(path string) error {
 		return err
 	}
 
-	timestamp := time.Now().Format("2006-01-02_15-04-05")
-	historyPath := filepath.Join(backupDir, "config_"+timestamp+".bak")
+	historyPath, err := reserveName(backupDir, "config_"+time.Now().Format("2006-01-02_15-04-05"), ".bak")
+	if err != nil {
+		return err
+	}
+	if err := WriteAtomic(historyPath, data); err != nil {
+		_ = os.Remove(historyPath)
+		return err
+	}
+	return nil
+}
 
-	return WriteAtomic(historyPath, data)
+// reserveName creates an empty placeholder at dir/stem+ext, or at stem_01+ext,
+// stem_02+ext, ... if that is taken, and returns its path. History names have
+// one-second resolution, so two saves in the same second used to overwrite the
+// earlier copy. The "_NN" suffix sorts after the bare name, so rotateBackup's
+// name order stays chronological.
+func reserveName(dir, stem, ext string) (string, error) {
+	for i := 0; i < 100; i++ {
+		name := stem + ext
+		if i > 0 {
+			name = fmt.Sprintf("%s_%02d%s", stem, i, ext)
+		}
+		path := filepath.Join(dir, name)
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return path, f.Close()
+	}
+	return "", fmt.Errorf("no free name for %s%s in %s", stem, ext, dir)
 }
 
 func rotateBackup(dir string) error {
@@ -182,28 +241,41 @@ func rotateBackup(dir string) error {
 	return errors.Join(errs...)
 }
 
+// ErrPruneFailed means the config was saved but old history copies could not be
+// removed. Callers should report it as a warning, not as a failed save.
+var ErrPruneFailed = errors.New("config saved, but old backups could not be removed")
+
 // Save serialises c to disk, creates backups, rotates old backup copies, and clears Modified.
+// Once the file is written the save has happened: a pruning failure after that
+// comes back wrapped in ErrPruneFailed with Modified and Original already updated.
 func Save(c *Config) error {
-
-	if err := backup(c.Path); err != nil {
-		return err
-	}
 	data := Serialize(c)
-	if err := WriteAtomic(c.Path, data); err != nil {
+	if err := saveFile(c.Path, data); err != nil {
 		return err
 	}
+	c.Modified = false
+	c.Original = data
 
+	if err := pruneHistory(); err != nil {
+		return fmt.Errorf("%w: %w", ErrPruneFailed, err)
+	}
+	return nil
+}
+
+// saveFile backs up the current contents of path and atomically replaces them
+// with data.
+func saveFile(path string, data []byte) error {
+	if err := backup(path); err != nil {
+		return err
+	}
+	return WriteAtomic(path, data)
+}
+
+// pruneHistory keeps only the newest config history copies.
+func pruneHistory() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-
-	backupDir := filepath.Join(home, ".keyward", "backups", "config")
-	if err := rotateBackup(backupDir); err != nil {
-		return err
-	}
-
-	c.Modified = false
-	c.Original = data
-	return nil
+	return rotateBackup(filepath.Join(home, ".keyward", "backups", "config"))
 }

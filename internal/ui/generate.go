@@ -199,12 +199,17 @@ func (m generateModel) submit() (generateModel, tea.Cmd) {
 	if dir == "" {
 		dir = m.sshDir
 	}
+	dir, err := absUserPath(dir)
+	if err != nil {
+		m.formErr = err
+		return m, nil
+	}
 	if pass != conf {
 		m.formErr = fmt.Errorf("passphrases do not match")
 		return m, nil
 	}
 	if pass == "" && !m.allowEmpty {
-		m.formErr = fmt.Errorf("passphrase is empty — enable 'Allow empty passphrase' to proceed")
+		m.formErr = fmt.Errorf("passphrase is empty: enable 'Allow empty passphrase' to proceed")
 		return m, nil
 	}
 
@@ -318,13 +323,16 @@ func (m generateModel) view() string {
 
 	// ── Passphrase risk warning ───────────────────────
 	if m.allowEmpty {
-		sb.WriteString("\n  " + formErrorStyle.Render("⚠  key will be stored unencrypted — suitable for CI/deploy keys only") + "\n")
+		sb.WriteString("\n  " + formErrorStyle.Render("⚠  key will be stored unencrypted, suitable for CI/deploy keys only") + "\n")
 	}
 
 	// ── Output dir preview ───────────────────────────
 	dir := m.inputs[inDir].Value()
 	if dir == "" {
 		dir = m.sshDir
+	}
+	if abs, err := absUserPath(dir); err == nil {
+		dir = abs
 	}
 	filename := m.inputs[inFilename].Value()
 	if filename != "" {

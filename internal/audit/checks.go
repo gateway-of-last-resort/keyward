@@ -40,16 +40,6 @@ func checkPlatformPermissionModel() []AuditResult {
 	}}
 }
 
-func expandPath(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			path = filepath.Join(home, path[2:])
-		}
-	}
-	return os.ExpandEnv(path)
-}
-
 func checkPassphrase(key keys.Key) []AuditResult {
 
 	var results []AuditResult
@@ -216,12 +206,17 @@ func checkAge(key keys.Key) []AuditResult {
 
 	if !key.ModifiedAt.IsZero() {
 		if time.Since(key.ModifiedAt) > maxKeyAge {
+			fix := "Use Keyward to rotate this key" //(press 'r')
+			if !keys.Algorithm(key.Algorithm).IsValid() {
+				// Keyward can only rotate into Ed25519 or RSA.
+				fix = "Generate a new Ed25519 key with Keyward and replace this one"
+			}
 			results = append(results, AuditResult{
 				KeyPath:  keyPath,
 				Severity: Warning,
 				Category: CategoryKey,
 				Message:  "Key is too old",
-				Fix:      "Use Keyward to rotate this key", //(press 'r')
+				Fix:      fix,
 			})
 		}
 	}
@@ -276,7 +271,10 @@ func checkIdentityFileExists(cfg *config.Config) []AuditResult {
 	var results []AuditResult
 
 	for _, path := range identityFiles(cfg) {
-		expandedPath := expandPath(path)
+		expandedPath, ok := config.ExpandPath(path)
+		if !ok {
+			continue
+		}
 		if _, err := os.Stat(expandedPath); err != nil {
 			results = append(results, AuditResult{
 				KeyPath:  expandedPath,
@@ -295,7 +293,9 @@ func newCheckKeyLinkedToHost(allKeys []keys.Key) ConfigCheck {
 		linkedPaths := make(map[string]bool)
 
 		for _, path := range identityFiles(cfg) {
-			linkedPaths[expandPath(path)] = true
+			if expanded, ok := config.ExpandPath(path); ok {
+				linkedPaths[expanded] = true
+			}
 		}
 
 		var results []AuditResult

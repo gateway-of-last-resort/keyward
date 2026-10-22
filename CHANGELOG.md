@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-22
+
+Fixes from a full code review of 1.0.3, several of which could lose or corrupt
+data, and a reworked way the TUI reports what happened. The on-disk formats are
+unchanged; `keyward list` now prints paths it used to leave blank.
+
+### Added
+
+- **One place for messages in the TUI.** Errors, notices, results and
+  confirmation questions now appear in a single area just above the key hints,
+  instead of replacing the hints or being scattered across screens. Errors stay
+  until you leave the tab, notices and results fade after six seconds, and a long
+  message wraps to at most three lines. Actions that used to finish silently now
+  say so: a key generated, imported, rotated or deleted, added to ssh-agent, a
+  host forgotten.
+
+### Changed
+
+- **Backup tab works like the other lists.** Backups are picked with the cursor
+  and marked with the accent bar; `r` restores the selected one after a
+  confirmation, with no number to type.
+- **Confirmation questions name what they act on** (`delete host *?`,
+  `restore from 2026-10-22_12-00-00.tar.age?`), and the key hints below turn
+  yellow to show the answer keys.
+- **Long lists scroll only when the cursor reaches the top or bottom edge.** The
+  cursor used to stay pinned to the last row, so moving up scrolled the list
+  instead of moving the cursor.
+- **Rotation is offered only for Ed25519 and RSA keys,** the two kinds Keyward can
+  generate. For other keys it failed every time; the audit now suggests
+  generating a new Ed25519 key instead.
+- **A key generated outside the SSH directory is not added to the list.** It used
+  to appear and then vanish at the next rescan; a notice now says where it was
+  saved.
+- **`~` and relative paths work in Settings and in the generate form.** The SSH
+  directory is stored as an absolute path, so it no longer depends on where
+  Keyward is started.
+
+### Fixed
+
+- **Deleting one of two hosts with the same pattern deletes the selected one.**
+  With two `Host *` blocks, deleting the second removed the first.
+- **Quick metadata edits are no longer lost.** Saves run in the background and
+  could finish out of order, leaving an older version on disk.
+- **A crash right after rotating, generating, importing or restoring a key cannot
+  leave an empty key file.** Key files and the directories around them are now
+  flushed to disk before the old key is replaced.
+- **An imported key is never paired with someone else's `.pub`.** A public half
+  left at the destination gave the new key the wrong fingerprint; a mismatched
+  `.pub` next to the source is now rejected.
+- **Forgetting a host removes that host.** If `known_hosts` was rewritten after
+  the tab opened, the line number could point at a neighbour; Keyward now refuses
+  and reloads the list.
+- **Saving keeps a symlinked `config` or `known_hosts` a symlink.** The file was
+  replaced by a regular one, cutting it off from a dotfiles repository.
+- **Backups include subdirectories of `~/.ssh`,** such as `config.d/` used with
+  `Include`. They were silently left out.
+- **Restore skips archive entries that are not regular files** or that point at
+  the SSH or vault directory itself.
+- **A config created with `n` survives switching tabs** before it is saved.
+- **`keyward list` and `keyward agent list` print a path for every key.** Public-only
+  keys had an empty path, and a private file Keyward cannot read was shown as
+  unencrypted; it is now labelled `unparsed`.
+- **The config editor keeps its cursor and the "saved" message after saving,** and
+  a failure to prune old config backups is reported as a warning rather than as a
+  failed save.
+- **The audit understands `IdentityFile none`, quoted paths and `%` tokens**
+  instead of reporting them as missing files.
+- **`import --force` over an existing file leaves the key at `0600`,** whatever
+  the replaced file's mode was.
+- **`Host` and `Match` can no longer be added as parameters** or uncommented
+  inside a block, which split the block once the file was read back.
+- **Duplicating a `Match` block rewrites its header,** and adding or moving a block
+  no longer drops the config's trailing newline.
+- **Two backups made in the same second no longer overwrite each other,** and
+  `backup --out` writes atomically at `0600`.
+- **A leftover `master.key.bak` holding the old password is removed** once the
+  vault unlocks with the new one.
+
+### Security
+
+- **Text read from disk can no longer drive the terminal.** Key comments, file
+  names and `known_hosts` hosts are printed without control characters in both
+  the TUI and the CLI; a crafted `.pub` could otherwise send escape sequences,
+  for example to overwrite the clipboard.
+- **The ssh-agent passphrase is cleared** from the TUI as soon as it is used.
+
 ## [1.0.3] - 2026-08-20
 
 Three fixes carried over from the pre-1.0 review. No format or command-line
@@ -377,7 +463,8 @@ Initial public release.
   key (argon2id → ChaCha20-Poly1305 → age X25519 identity).
 - `--version` and `--help` flags.
 
-[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/gateway-of-last-resort/keyward/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/gateway-of-last-resort/keyward/compare/v1.0.0...v1.0.1

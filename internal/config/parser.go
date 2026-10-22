@@ -57,6 +57,11 @@ func parseParam(raw string) Token {
 }
 
 func tokenize(data []byte) []Token {
+	// An empty file has no lines. Split would return one empty line, which
+	// rendered as a stray blank line ahead of the first block added to a new config.
+	if len(data) == 0 {
+		return nil
+	}
 	lines := bytes.Split(data, []byte("\n"))
 	tokens := make([]Token, len(lines))
 

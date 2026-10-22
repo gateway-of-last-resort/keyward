@@ -47,6 +47,13 @@ func isValidSSHKeyword(key string) bool {
 // IsValidSSHKeyword reports whether key is a recognized ssh_config(5) keyword.
 func IsValidSSHKeyword(key string) bool { return isValidSSHKeyword(key) }
 
+// IsBlockKeyword reports whether key opens a block (Host or Match). Such a line
+// can't live inside a block as a parameter: written out, it would start a new
+// block and take every following line of the old one with it.
+func IsBlockKeyword(key string) bool {
+	return strings.EqualFold(key, "host") || strings.EqualFold(key, "match")
+}
+
 var numericKeys = map[string]struct{}{
 	"port": {}, "serveraliveinterval": {}, "serveralivecountmax": {}, "connecttimeout": {},
 }

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,7 @@ type knownHostsModel struct {
 	width, height int
 	entries       []knownhosts.Entry
 	cursor        int
+	offset        int // first visible row; see scrollOffset
 	sshDir        string
 	path          string
 	confirmForget bool
@@ -25,13 +27,23 @@ func newKnownHostsModel(entries []knownhosts.Entry, sshDir, path string) knownHo
 	return knownHostsModel{entries: entries, sshDir: sshDir, path: path}
 }
 
-// khForgotMsg is emitted after an entry is removed from known_hosts.
-type khForgotMsg struct{ host string }
+// khForgotMsg is emitted after an entry is removed from known_hosts, or when the
+// file changed underneath the screen (err is then ErrEntryChanged and the list
+// must be re-read so the user sees what is actually there).
+type khForgotMsg struct {
+	host string
+	err  error
+}
 
-// forgetHostCmd removes the entry at lineNum from the known_hosts file.
-func forgetHostCmd(path string, lineNum int, host string) tea.Cmd {
+// forgetHostCmd removes entry e from the known_hosts file.
+func forgetHostCmd(path string, e knownhosts.Entry) tea.Cmd {
+	host := khHostLabel(e)
 	return func() tea.Msg {
-		if err := knownhosts.Forget(path, lineNum); err != nil {
+		err := knownhosts.Forget(path, e.LineNum, e.Raw)
+		if errors.Is(err, knownhosts.ErrEntryChanged) {
+			return khForgotMsg{host: host, err: err}
+		}
+		if err != nil {
 			return errMsg{err}
 		}
 		return khForgotMsg{host: host}
@@ -61,8 +73,7 @@ func (m knownHostsModel) update(msg tea.Msg) (knownHostsModel, tea.Cmd) {
 				return m, nil
 			}
 			m.confirmForget = false
-			e := m.entries[m.cursor]
-			return m, forgetHostCmd(m.path, e.LineNum, khHostLabel(e))
+			return m, forgetHostCmd(m.path, m.entries[m.cursor])
 		case "esc":
 			if m.confirmForget {
 				m.confirmForget = false
@@ -74,6 +85,34 @@ func (m knownHostsModel) update(msg tea.Msg) (knownHostsModel, tea.Cmd) {
 	return m, nil
 }
 
+// listRows is the number of entry rows that fit: height minus header (1) minus
+// the confirm/hint line (2).
+func (m knownHostsModel) listRows() int { return max(m.height-3, 1) }
+
+// syncScroll stores the scroll window for the current cursor.
+func (m knownHostsModel) syncScroll() knownHostsModel {
+	m.offset = scrollOffset(m.offset, m.cursor, m.listRows(), len(m.entries))
+	return m
+}
+
+// hints returns the status-bar key hints, switching to the answer keys while a
+// forget is pending.
+func (m knownHostsModel) hints() string {
+	if m.confirmForget {
+		return "d  confirm forget  ·  esc  cancel"
+	}
+	return screenHint(ScreenKnownHosts)
+}
+
+// confirmPrompt is the pending forget question, shown in the message area; the
+// keys that answer it are in the hints right below.
+func (m knownHostsModel) confirmPrompt() string {
+	if !m.confirmForget || m.cursor >= len(m.entries) {
+		return ""
+	}
+	return fmt.Sprintf("forget %s?", khHostLabel(m.entries[m.cursor]))
+}
+
 // khHostLabel returns a short display label for an entry's host field.
 func khHostLabel(e knownhosts.Entry) string {
 	if e.Hashed {
@@ -83,9 +122,9 @@ func khHostLabel(e knownhosts.Entry) string {
 		return "(unknown)"
 	}
 	if len(e.Hosts) == 1 {
-		return e.Hosts[0]
+		return safeDisplay(e.Hosts[0])
 	}
-	return fmt.Sprintf("%s +%d", e.Hosts[0], len(e.Hosts)-1)
+	return fmt.Sprintf("%s +%d", safeDisplay(e.Hosts[0]), len(e.Hosts)-1)
 }
 
 // --- known_hosts column widths ---
@@ -111,15 +150,8 @@ func (m knownHostsModel) view() string {
 		return sb.String()
 	}
 
-	// available rows = height minus header (1) minus confirm/hint line (2)
-	maxRows := m.height - 3
-	if maxRows < 1 {
-		maxRows = 1
-	}
-	start := 0
-	if m.cursor >= maxRows {
-		start = m.cursor - maxRows + 1
-	}
+	maxRows := m.listRows()
+	start := scrollOffset(m.offset, m.cursor, maxRows, len(m.entries))
 	end := start + maxRows
 	if end > len(m.entries) {
 		end = len(m.entries)
@@ -132,13 +164,6 @@ func (m knownHostsModel) view() string {
 	if len(m.entries) > maxRows {
 		fmt.Fprintf(&sb, "%s\n", dimStyle.Render(fmt.Sprintf(
 			"  %d–%d of %d", start+1, end, len(m.entries),
-		)))
-	}
-
-	if m.confirmForget {
-		e := m.entries[m.cursor]
-		sb.WriteString("\n" + warnMsgStyle.Render(fmt.Sprintf(
-			"forget %s? press d again to confirm · esc to cancel", khHostLabel(e),
 		)))
 	}
 

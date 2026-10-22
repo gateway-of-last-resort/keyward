@@ -1,36 +1,27 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"filippo.io/age"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/gateway-of-last-resort/keyward/internal/storage"
-	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
-// backupModel handles backup creation and restore.
-// When identity is non-nil (user already authenticated), no password re-entry is needed.
+// backupModel handles backup creation and restore with the identity unlocked at
+// startup; the screen is only reachable after the vault is unlocked.
 type backupModel struct {
 	width, height int
 	sshDir        string
 	vaultDir      string
 	identity      age.Identity
 
-	// password prompt state (only used when identity is nil)
-	passwordInput textinput.Model
-	confirmInput  textinput.Model
-	promptStep    backupStep
-
-	// result
-	statusMsg string
-	isError   bool
+	promptStep backupStep
 
 	backups       []string // list of existing backup files
 	cursor        int      // selected backup index
@@ -42,22 +33,14 @@ type backupStep int
 
 const (
 	stepIdle    backupStep = iota // showing menu
-	stepPasswd                    // prompting for password
 	stepConfirm                   // prompting for restore confirmation
-	stepRestore                   // prompting which backup to restore (cursor)
 )
-
-var backupMsgStyle = lipgloss.NewStyle().Foreground(colGreen)
 
 func (m backupModel) hints() string {
 	nav := "tab / shift+tab  switch screens"
 	switch m.promptStep {
-	case stepPasswd:
-		return "enter  confirm  ·  esc  cancel"
 	case stepConfirm:
 		return "y  confirm restore  ·  n / esc  cancel"
-	case stepRestore:
-		return "enter  restore  ·  esc  cancel"
 	default:
 		if m.confirmDelete {
 			return "d  confirm delete  ·  esc  cancel"
@@ -67,40 +50,29 @@ func (m backupModel) hints() string {
 }
 
 func newBackupModel(sshDir, vaultDir string, identity age.Identity) backupModel {
-	pi := textinput.New()
-	pi.Placeholder = "vault password"
-	pi.EchoMode = textinput.EchoPassword
-	pi.EchoCharacter = '•'
-	pi.Focus()
-
-	ci := textinput.New()
-	ci.Placeholder = "select backup to restore (number)"
-
 	return backupModel{
-		sshDir:        sshDir,
-		vaultDir:      vaultDir,
-		identity:      identity,
-		passwordInput: pi,
-		confirmInput:  ci,
-		backups:       listBackups(vaultDir),
+		sshDir:   sshDir,
+		vaultDir: vaultDir,
+		identity: identity,
+		backups:  listBackups(vaultDir),
 	}
 }
+
+// errVaultLocked is shown if a backup action runs without an unlocked identity.
+// The screen is reached only after unlock, so this guards a state the UI
+// should never be in rather than prompting for a password.
+var errVaultLocked = errors.New("vault is locked; restart keyward and unlock it")
 
 func (m backupModel) update(msg tea.Msg) (backupModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case backupResultMsg:
 		return m.handleResult(msg), nil
 	case tea.KeyMsg:
-		m.statusMsg = ""
 		switch m.promptStep {
 		case stepIdle:
 			return m.updateIdle(msg)
-		case stepPasswd:
-			return m.updatePasswd(msg)
 		case stepConfirm:
 			return m.updateConfirm(msg)
-		case stepRestore:
-			return m.updateRestore(msg)
 		}
 	}
 	return m, nil
@@ -119,22 +91,19 @@ func (m backupModel) updateIdle(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 			m.cursor = (m.cursor + 1) % len(m.backups)
 		}
 	case "b":
-		if m.identity != nil {
-			return m, m.runBackupDirect("")
+		if m.identity == nil {
+			return m, showStatus(statusError, errVaultLocked.Error())
 		}
-		m.promptStep = stepPasswd
-		m.passwordInput.SetValue("")
-		m.passwordInput.Placeholder = "vault password (for backup)"
-		m.passwordInput.Focus()
+		return m, m.runBackupDirect("")
 	case "r":
 		if len(m.backups) == 0 {
-			m.statusMsg = "no backups found in " + filepath.Join(m.vaultDir, "backups")
-			m.isError = true
-			return m, nil
+			return m, showStatus(statusNotice, "no backups found in "+filepath.Join(m.vaultDir, "backups"))
 		}
-		m.promptStep = stepRestore
-		m.confirmInput.SetValue("")
-		m.confirmInput.Focus()
+		// Restore overwrites files in ~/.ssh irreversibly, so it always asks
+		// to confirm the backup under the cursor first.
+		m.confirmDelete = false
+		m.restoreTarget = m.backups[m.cursor]
+		m.promptStep = stepConfirm
 	case "d":
 		if len(m.backups) > 0 {
 			if !m.confirmDelete {
@@ -142,16 +111,13 @@ func (m backupModel) updateIdle(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 			} else {
 				m.confirmDelete = false
 				if err := os.Remove(m.backups[m.cursor]); err != nil {
-					m.statusMsg = "delete failed: " + err.Error()
-					m.isError = true
-				} else {
-					m.backups = listBackups(m.vaultDir)
-					if m.cursor >= len(m.backups) && m.cursor > 0 {
-						m.cursor--
-					}
-					m.statusMsg = "backup deleted"
-					m.isError = false
+					return m, showStatus(statusError, "delete failed: "+err.Error())
 				}
+				m.backups = listBackups(m.vaultDir)
+				if m.cursor >= len(m.backups) && m.cursor > 0 {
+					m.cursor--
+				}
+				return m, showStatus(statusSuccess, "backup deleted")
 			}
 		}
 	case "esc":
@@ -164,72 +130,16 @@ func (m backupModel) updateIdle(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m backupModel) updatePasswd(msg tea.KeyMsg) (backupModel, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.promptStep = stepIdle
-		return m, nil
-	case "enter":
-		pass := m.passwordInput.Value()
-		if pass == "" {
-			m.statusMsg = "password cannot be empty"
-			m.isError = true
-			return m, nil
-		}
-		return m, m.runBackup(pass)
-	}
-	var cmd tea.Cmd
-	m.passwordInput, cmd = m.passwordInput.Update(msg)
-	return m, cmd
-}
-
-func (m backupModel) updateRestore(msg tea.KeyMsg) (backupModel, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.promptStep = stepIdle
-		return m, nil
-	case "enter":
-		choice := strings.TrimSpace(m.confirmInput.Value())
-		if choice == "" {
-			m.promptStep = stepIdle
-			return m, nil
-		}
-		var idx int
-		if _, err := fmt.Sscanf(choice, "%d", &idx); err != nil || idx < 1 || idx > len(m.backups) {
-			m.statusMsg = fmt.Sprintf("enter a number between 1 and %d", len(m.backups))
-			m.isError = true
-			return m, nil
-		}
-		// Restore overwrites files in ~/.ssh irreversibly, so require an
-		// explicit confirmation before touching anything (the declared
-		// stepConfirm). The chosen number stays in confirmInput for the
-		// password path in runBackup.
-		m.restoreTarget = m.backups[idx-1]
-		m.promptStep = stepConfirm
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.confirmInput, cmd = m.confirmInput.Update(msg)
-	return m, cmd
-}
-
 // updateConfirm handles the restore confirmation prompt. Only an explicit "y"
 // proceeds; anything else cancels back to the menu without touching ~/.ssh.
 func (m backupModel) updateConfirm(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
-		backupFile := m.restoreTarget
-		if m.identity != nil {
-			m.promptStep = stepIdle
-			return m, m.runBackupDirect(backupFile)
+		m.promptStep = stepIdle
+		if m.identity == nil {
+			return m, showStatus(statusError, errVaultLocked.Error())
 		}
-		// Vault still locked: collect the password, then runBackup restores
-		// the selection remembered in confirmInput.
-		m.passwordInput.SetValue("")
-		m.passwordInput.Placeholder = "vault password (for restore)"
-		m.passwordInput.Focus()
-		m.promptStep = stepPasswd
-		return m, nil
+		return m, m.runBackupDirect(m.restoreTarget)
 	default:
 		m.promptStep = stepIdle
 		return m, nil
@@ -257,45 +167,6 @@ func (m backupModel) runBackupDirect(restoreFile string) tea.Cmd {
 	}
 }
 
-// runBackup attempts to create or restore a backup with the given password.
-func (m backupModel) runBackup(password string) tea.Cmd {
-	return func() tea.Msg {
-		masterPath := filepath.Join(m.vaultDir, "master.key")
-
-		// initialise vault only if neither master.key nor a recoverable .bak exists
-		if !crypto.MasterKeyExists(masterPath) {
-			if _, err := crypto.InitMasterKey(masterPath, password); err != nil {
-				return backupResultMsg{err: fmt.Errorf("init vault: %w", err)}
-			}
-		}
-
-		identity, err := crypto.LoadMasterKey(masterPath, password)
-		if err != nil {
-			return backupResultMsg{err: fmt.Errorf("wrong password or corrupted vault: %w", err)}
-		}
-
-		// if a restore was queued, do that; otherwise create backup
-		if m.promptStep == stepPasswd && m.confirmInput.Value() != "" {
-			var idx int
-			_, _ = fmt.Sscanf(m.confirmInput.Value(), "%d", &idx)
-			if idx < 1 || idx > len(m.backups) {
-				return backupResultMsg{err: fmt.Errorf("invalid backup selection")}
-			}
-			backupFile := m.backups[idx-1]
-			if err := storage.RestoreBackup(backupFile, m.sshDir, m.vaultDir, identity); err != nil {
-				return backupResultMsg{err: fmt.Errorf("restore failed: %w", err)}
-			}
-			return backupResultMsg{msg: "restored from " + filepath.Base(backupFile), restored: true}
-		}
-
-		res, err := storage.CreateBackup(m.sshDir, m.vaultDir, identity)
-		if err != nil {
-			return backupResultMsg{err: fmt.Errorf("backup failed: %w", err)}
-		}
-		return backupResultMsg{msg: backupSavedMsg(res)}
-	}
-}
-
 // backupSavedMsg builds the success line, appending honest notes when some files
 // were left out of the archive or old backups couldn't be pruned.
 func backupSavedMsg(res storage.BackupResult) string {
@@ -317,14 +188,11 @@ type backupResultMsg struct {
 
 // Wire backupResultMsg into the model's Update.
 // This is handled inside backupModel.update via an extra type switch.
+// handleResult returns the screen to its menu after a backup or restore; the
+// root model shows the outcome in the message area.
 func (m backupModel) handleResult(r backupResultMsg) backupModel {
 	m.promptStep = stepIdle
-	if r.err != nil {
-		m.statusMsg = r.err.Error()
-		m.isError = true
-	} else {
-		m.statusMsg = r.msg
-		m.isError = false
+	if r.err == nil {
 		m.backups = listBackups(m.vaultDir)
 	}
 	return m
@@ -335,48 +203,36 @@ func (m backupModel) view() string {
 
 	sb.WriteString(sectionHeaderStyle.Width(m.width).Render("Backup / Restore") + "\n\n")
 
-	// existing backups list
-	if len(m.backups) > 0 {
-		sb.WriteString(labelStyle.Render("Backups") + "\n")
-		for i, b := range m.backups {
-			line := fmt.Sprintf("  %d.  %s", i+1, filepath.Base(b))
-			if m.promptStep == stepIdle && i == m.cursor {
-				sb.WriteString(activeBlockStyle.Render(line) + "\n")
-			} else {
-				sb.WriteString(line + "\n")
-			}
-		}
-		sb.WriteString("\n")
-	} else {
-		sb.WriteString(dimStyle.Render("  no backups found") + "\n\n")
+	if len(m.backups) == 0 {
+		sb.WriteString(dimStyle.Render("  no backups found") + "\n")
+		return sb.String()
 	}
-
-	switch m.promptStep {
-	case stepIdle:
-		if m.confirmDelete {
-			sb.WriteString(warnMsgStyle.Render("  delete backup? press d again to confirm · esc to cancel"))
-			sb.WriteString("\n")
+	sb.WriteString(" " + labelStyle.Render("Backups") + "\n")
+	// Rows pad to the full width so the selection fill spans the line, like the
+	// other lists.
+	rowWidth := max(m.width-2, 1)
+	for i, b := range m.backups {
+		name := fmt.Sprintf("%-*s", rowWidth, filepath.Base(b))
+		if i == m.cursor {
+			sb.WriteString(selectedRow(name) + "\n")
+		} else {
+			sb.WriteString("  " + name + "\n")
 		}
-	case stepPasswd:
-		sb.WriteString(labelStyle.Render("Password") + "  " + m.passwordInput.View() + "\n")
-	case stepConfirm:
-		sb.WriteString(warnMsgStyle.Render(fmt.Sprintf(
-			"  restore overwrites files in %s — this cannot be undone.", m.sshDir)) + "\n")
-		sb.WriteString(warnMsgStyle.Render(fmt.Sprintf(
-			"  restore from %s? press y to confirm · n / esc to cancel", filepath.Base(m.restoreTarget))) + "\n")
-	case stepRestore:
-		sb.WriteString(labelStyle.Render("Restore #") + "  " + m.confirmInput.View() + "\n")
 	}
-
-	if m.statusMsg != "" {
-		style := backupMsgStyle
-		if m.isError {
-			style = formErrorStyle
-		}
-		sb.WriteString("\n  " + style.Render(m.statusMsg) + "\n")
-	}
-
 	return sb.String()
+}
+
+// confirmPrompt is the pending delete or restore question, shown in the message
+// area; the keys that answer it are in the hints right below.
+func (m backupModel) confirmPrompt() string {
+	switch {
+	case m.promptStep == stepConfirm:
+		return fmt.Sprintf("restore from %s? This overwrites files in %s and cannot be undone.",
+			filepath.Base(m.restoreTarget), m.sshDir)
+	case m.promptStep == stepIdle && m.confirmDelete:
+		return "delete backup " + filepath.Base(m.backups[m.cursor]) + "?"
+	}
+	return ""
 }
 
 // listBackups returns .tar.age files in vaultDir/backups, newest first.

@@ -57,7 +57,7 @@ func TestMutators_StripControlChars(t *testing.T) {
 	})
 	t.Run("DuplicateBlock", func(t *testing.T) {
 		c := config.ParseBytes("cfg", []byte("Host web\n    Port 22\n"))
-		if !config.DuplicateBlock(&c, "web", "evil\n    ProxyCommand pwn") {
+		if !config.DuplicateBlock(&c, 0, "evil\n    ProxyCommand pwn") {
 			t.Fatal("DuplicateBlock returned false")
 		}
 		assertNoInjectedDirective(t, &c)

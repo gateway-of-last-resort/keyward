@@ -417,3 +417,35 @@ func TestChangeMasterKeyPassword_Errors(t *testing.T) {
 		}
 	})
 }
+
+// A crash between writing the new master.key and removing master.key.bak leaves
+// the identity under the OLD password on disk. Once the primary unlocks, that copy
+// is no longer needed for recovery and must go; a failed unlock leaves it alone.
+func TestLoadMasterKey_RemovesStaleBakAfterUnlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "master.key")
+	if _, err := crypto.InitMasterKey(path, "new-password"); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(t.TempDir(), "master.key")
+	if _, err := crypto.InitMasterKey(old, "old-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(old, path+".bak"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := crypto.LoadMasterKey(path, "old-password"); !errors.Is(err, crypto.ErrWrongPassword) {
+		t.Fatalf("unlock with the old password = %v, want ErrWrongPassword", err)
+	}
+	if _, err := os.Stat(path + ".bak"); err != nil {
+		t.Fatalf(".bak must survive a failed unlock: %v", err)
+	}
+
+	if _, err := crypto.LoadMasterKey(path, "new-password"); err != nil {
+		t.Fatalf("unlock with the new password: %v", err)
+	}
+	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
+		t.Error("stale .bak with the old password still on disk after unlock")
+	}
+}

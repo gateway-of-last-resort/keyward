@@ -95,6 +95,16 @@ func TestLifecycle_InitGenerateBackupRestore(t *testing.T) {
 	// restore later.
 	edPrivBefore := readFile(t, edKey.PrivateKeyPath)
 
+	// An Include'd config fragment in a subdirectory must be backed up too.
+	includeDir := filepath.Join(sshDir, "config.d")
+	if err := os.MkdirAll(includeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	fragment := []byte("Host work\n    User me\n")
+	if err := os.WriteFile(filepath.Join(includeDir, "work"), fragment, 0600); err != nil {
+		t.Fatal(err)
+	}
+
 	// 5. Back everything up.
 	res, err := storage.CreateBackup(sshDir, vaultDir, identity)
 	if err != nil {
@@ -107,10 +117,13 @@ func TestLifecycle_InitGenerateBackupRestore(t *testing.T) {
 		t.Fatalf("backup archive missing: %v", err)
 	}
 
-	// 6. Wipe the private keys and the metadata vault.
+	// 6. Wipe the private keys, the config fragment and the metadata vault.
 	mustRemove(t, edKey.PrivateKeyPath)
 	mustRemove(t, filepath.Join(sshDir, "id_rsa"))
 	mustRemove(t, filepath.Join(vaultDir, "metadata.age"))
+	if err := os.RemoveAll(includeDir); err != nil {
+		t.Fatal(err)
+	}
 
 	// 7. Restore.
 	if err := storage.RestoreBackup(res.Path, sshDir, vaultDir, identity); err != nil {
@@ -121,6 +134,11 @@ func TestLifecycle_InitGenerateBackupRestore(t *testing.T) {
 	edPrivAfter := readFile(t, edKey.PrivateKeyPath)
 	if !bytes.Equal(edPrivBefore, edPrivAfter) {
 		t.Error("restored ed25519 private key differs from the original")
+	}
+
+	// 8a'. The config fragment from the subdirectory is back as well.
+	if got := readFile(t, filepath.Join(includeDir, "work")); !bytes.Equal(got, fragment) {
+		t.Errorf("restored config.d/work = %q, want %q", got, fragment)
 	}
 
 	// 8b. Metadata decrypts and carries the same tags and note.

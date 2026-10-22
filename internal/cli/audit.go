@@ -101,9 +101,9 @@ func writeAuditText(w io.Writer, r audit.AuditReport) {
 		if target == "" {
 			target = string(res.Category)
 		}
-		fmt.Fprintf(w, "%-9s %s: %s\n", res.Severity, target, res.Message)
+		fmt.Fprintf(w, "%-9s %s: %s\n", res.Severity, displaySafe(target), res.Message)
 		if res.Fix != "" {
-			fmt.Fprintf(w, "          fix: %s\n", res.Fix)
+			fmt.Fprintf(w, "          fix: %s\n", displaySafe(res.Fix))
 		}
 	}
 }

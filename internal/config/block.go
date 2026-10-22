@@ -191,7 +191,7 @@ func toggleAt(b *Block, i int) bool {
 	stripped := leading + content
 	newToken := parseParam(stripped)
 
-	if newToken.Key == "" || !isValidSSHKeyword(newToken.Key) {
+	if newToken.Key == "" || !isValidSSHKeyword(newToken.Key) || IsBlockKeyword(newToken.Key) {
 		b.Tokens[i] = original
 		return false
 	}

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,10 @@ type configModel struct {
 	paramCursor int  // selected token index in visible paramTokens list
 	paneRight   bool // focus is on the right pane (token list)
 
+	// first visible row of each pane; see scrollOffset
+	blockOffset int
+	paramOffset int
+
 	// inline value editing
 	editing   bool
 	editInput textinput.Model
@@ -46,9 +51,7 @@ type configModel struct {
 	confirmDeleteBlock bool
 	confirmDeleteParam bool
 
-	saved   bool
-	saveErr error
-	saveMsg string
+	saved bool
 }
 
 func newConfigModel(cfg *config.Config, sshDir string) configModel {
@@ -131,6 +134,9 @@ func validateParamKey(key string) error {
 	if !config.IsValidSSHKeyword(key) {
 		return fmt.Errorf("unknown SSH keyword %q", key)
 	}
+	if config.IsBlockKeyword(key) {
+		return fmt.Errorf("%s starts a new block; add it with 'a' in the Hosts pane", key)
+	}
 	return nil
 }
 
@@ -144,6 +150,8 @@ func (m configModel) isBusy() bool {
 func (m configModel) hints() string {
 	nav := "tab/shift+tab  switch screens"
 	switch {
+	case m.cfg == nil:
+		return "n  create config  ·  esc  back  ·  " + nav
 	case m.addingBlock, m.renamingBlock, m.editing:
 		return "enter  confirm  ·  esc  cancel"
 	case m.addingParam:
@@ -190,7 +198,6 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 		if m.addingParam {
 			return m.updateAddParam(msg)
 		}
-		m.saveMsg = ""
 		switch msg.String() {
 		case "esc":
 			if m.confirmDeleteBlock || m.confirmDeleteParam {
@@ -280,8 +287,7 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 						m.confirmDeleteBlock = true
 					} else {
 						m.confirmDeleteBlock = false
-						pattern := m.cfg.Blocks[m.blockCursor].Pattern
-						config.RemoveBlock(m.cfg, pattern)
+						config.RemoveBlock(m.cfg, m.blockCursor)
 						if m.blockCursor >= len(m.cfg.Blocks) && m.blockCursor > 0 {
 							m.blockCursor--
 						}
@@ -305,13 +311,17 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 			}
 		case "s":
 			if m.cfg.Modified {
-				if err := config.Save(m.cfg); err != nil {
-					m.saveErr = err
-					m.saveMsg = "✗  save failed: " + err.Error()
-				} else {
-					m.saveErr = nil
-					m.saveMsg = "✓  saved"
+				err := config.Save(m.cfg)
+				switch {
+				case errors.Is(err, config.ErrPruneFailed):
 					m.saved = true
+					cause := strings.TrimPrefix(err.Error(), config.ErrPruneFailed.Error()+": ")
+					return m, showStatus(statusNotice, "saved, but old config backups could not be removed: "+cause)
+				case err != nil:
+					return m, showStatus(statusError, "save failed: "+err.Error())
+				default:
+					m.saved = true
+					return m, showStatus(statusSuccess, "saved")
 				}
 			}
 		}
@@ -458,25 +468,76 @@ func (m configModel) updateAddParam(msg tea.KeyMsg) (configModel, tea.Cmd) {
 func (m configModel) createConfig() (configModel, tea.Cmd) {
 	cfgPath := filepath.Join(m.sshDir, "config")
 	if err := os.MkdirAll(m.sshDir, 0700); err != nil {
-		m.saveMsg = "✗  " + err.Error()
-		m.saveErr = err
-		return m, nil
+		return m, showStatus(statusError, "cannot create the config: "+err.Error())
 	}
 	if err := config.WriteAtomic(cfgPath, []byte("")); err != nil {
-		m.saveMsg = "✗  " + err.Error()
-		m.saveErr = err
-		return m, nil
+		return m, showStatus(statusError, "cannot create the config: "+err.Error())
 	}
 	c, err := config.ParseFile(cfgPath)
 	if err != nil {
-		m.saveMsg = "✗  " + err.Error()
-		m.saveErr = err
-		return m, nil
+		return m, showStatus(statusError, "cannot read the new config: "+err.Error())
 	}
 	m.cfg = &c
-	m.saveErr = nil
-	m.saveMsg = "✓  created " + cfgPath
-	return m, nil
+	created := m.cfg
+	return m, tea.Batch(
+		func() tea.Msg { return configCreatedMsg{cfg: created} },
+		showStatus(statusSuccess, "created "+cfgPath),
+	)
+}
+
+// configCreatedMsg hands a config created from the editor to the root model.
+// The editor is rebuilt from the root's cfg on every visit, so without it the
+// new config and any unsaved edits vanished on the next tab switch.
+type configCreatedMsg struct{ cfg *config.Config }
+
+// blockRows is the number of host rows that fit in the left pane, less one
+// while the add-host input is open.
+func (m configModel) blockRows() int {
+	rows := max(m.height-4, 1)
+	if m.addingBlock {
+		rows--
+	}
+	return max(rows, 1)
+}
+
+// paramRows is the number of parameter rows that fit in the right pane, less
+// two while the add-parameter inputs are open.
+func (m configModel) paramRows() int {
+	rows := max(m.height-4, 1)
+	if m.addingParam {
+		rows -= 2
+	}
+	return max(rows, 1)
+}
+
+// syncScroll stores both panes' scroll windows for the current cursors.
+func (m configModel) syncScroll() configModel {
+	if m.cfg == nil {
+		m.blockOffset, m.paramOffset = 0, 0
+		return m
+	}
+	m.blockOffset = scrollOffset(m.blockOffset, m.blockCursor, m.blockRows(), len(m.cfg.Blocks))
+	params := 0
+	if m.blockCursor < len(m.cfg.Blocks) {
+		params = len(paramTokens(m.cfg.Blocks[m.blockCursor]))
+	}
+	m.paramOffset = scrollOffset(m.paramOffset, m.paramCursor, m.paramRows(), params)
+	return m
+}
+
+// withConfig swaps in a freshly loaded config while keeping the editor's
+// selection and status line, clamping the cursors to the new config.
+func (m configModel) withConfig(cfg *config.Config) configModel {
+	m.cfg = cfg
+	if cfg == nil || len(cfg.Blocks) == 0 {
+		m.blockCursor, m.paramCursor, m.paneRight = 0, 0, false
+		return m
+	}
+	m.blockCursor = min(m.blockCursor, len(cfg.Blocks)-1)
+	if n := len(paramTokens(cfg.Blocks[m.blockCursor])); m.paramCursor >= n {
+		m.paramCursor = max(n-1, 0)
+	}
+	return m
 }
 
 // ── navigation helpers ────────────────────────────────────────────────────────
@@ -547,9 +608,6 @@ func (m configModel) view() string {
 		sb.WriteString(sectionHeaderStyle.Width(m.width).Render("SSH Config Editor") + "\n\n")
 		sb.WriteString(dimStyle.Render("  No SSH config found at "+cfgPath) + "\n\n")
 		sb.WriteString(dimStyle.Render("  n  create empty config file"))
-		if m.saveMsg != "" {
-			sb.WriteString("\n\n" + formErrorStyle.Render("  "+m.saveMsg))
-		}
 		return sb.String()
 	}
 
@@ -588,20 +646,19 @@ func (m configModel) view() string {
 		sb.WriteString(l + sep + r + "\n")
 	}
 
+	return sb.String()
+}
+
+// confirmPrompt is the pending delete question, shown in the message area; the
+// keys that answer it are in the hints right below.
+func (m configModel) confirmPrompt() string {
 	switch {
 	case m.confirmDeleteBlock:
-		sb.WriteString("\n" + warnMsgStyle.Render("  delete host? press d again to confirm · esc to cancel") + "\n")
+		return "delete host " + safeDisplay(m.cfg.Blocks[m.blockCursor].Pattern) + "?"
 	case m.confirmDeleteParam:
-		sb.WriteString("\n" + warnMsgStyle.Render("  delete param? press d again to confirm · esc to cancel") + "\n")
-	case m.saveMsg != "":
-		if m.saveErr != nil {
-			sb.WriteString("\n" + formErrorStyle.Render("  "+m.saveMsg) + "\n")
-		} else {
-			sb.WriteString("\n" + savedStyle.Render("  "+m.saveMsg) + "\n")
-		}
+		return "delete this parameter?"
 	}
-
-	return sb.String()
+	return ""
 }
 
 // paneWidths returns the widths of the Hosts and Parameters panes.
@@ -675,17 +732,8 @@ func (m configModel) renderBlocks(width int) string {
 	var sb strings.Builder
 	sb.WriteString(header + "\n")
 
-	avail := m.height - 4
-	if avail < 1 {
-		avail = 1
-	}
-	if m.addingBlock {
-		avail-- // reserve one line for the input
-	}
-	start := 0
-	if m.blockCursor >= avail {
-		start = m.blockCursor - avail + 1
-	}
+	avail := m.blockRows()
+	start := scrollOffset(m.blockOffset, m.blockCursor, avail, len(m.cfg.Blocks))
 	end := start + avail
 	if end > len(m.cfg.Blocks) {
 		end = len(m.cfg.Blocks)
@@ -699,7 +747,7 @@ func (m configModel) renderBlocks(width int) string {
 			m.renameInput.Width = m.blockEditWidth()
 			sb.WriteString(rowGutter(true) + m.renameInput.View() + "\n")
 		} else {
-			name := fitRight(b.Pattern, m.blockNameWidth())
+			name := fitRight(safeDisplay(b.Pattern), m.blockNameWidth())
 			var row string
 			switch {
 			case focused && i == m.blockCursor && !m.addingBlock:
@@ -721,7 +769,7 @@ func (m configModel) renderBlocks(width int) string {
 		}
 	}
 	if len(m.cfg.Blocks) == 0 && !m.addingBlock {
-		sb.WriteString(dimStyle.Render(" (no hosts — press a to add)") + "\n")
+		sb.WriteString(dimStyle.Render(" (no hosts: press a to add)") + "\n")
 	}
 
 	if m.addingBlock {
@@ -752,17 +800,8 @@ func (m configModel) renderParams(width int) string {
 	blk := m.cfg.Blocks[m.blockCursor]
 	tokens := paramTokens(blk)
 
-	avail := m.height - 4
-	if avail < 1 {
-		avail = 1
-	}
-	if m.addingParam {
-		avail -= 2 // reserve two lines for key+value inputs
-	}
-	start := 0
-	if m.paramCursor >= avail {
-		start = m.paramCursor - avail + 1
-	}
+	avail := m.paramRows()
+	start := scrollOffset(m.paramOffset, m.paramCursor, avail, len(tokens))
 	end := start + avail
 	if end > len(tokens) {
 		end = len(tokens)
@@ -812,7 +851,7 @@ func (m configModel) renderParams(width int) string {
 	}
 
 	if len(tokens) == 0 && !m.addingParam {
-		sb.WriteString(dimStyle.Render(" (no params — press a to add)") + "\n")
+		sb.WriteString(dimStyle.Render(" (no params: press a to add)") + "\n")
 	}
 
 	if m.addingParam {

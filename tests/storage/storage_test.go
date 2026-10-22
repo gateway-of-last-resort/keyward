@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -794,5 +797,169 @@ func TestRestoreBackup_WrongIdentity(t *testing.T) {
 	err = storage.RestoreBackup(res.Path, t.TempDir(), t.TempDir(), id2)
 	if !errors.Is(err, storage.ErrRestoreFailed) {
 		t.Errorf("err = %v, want ErrRestoreFailed", err)
+	}
+}
+
+// TestSave_ConcurrentWithLoad runs Saves and Loads at once, as the TUI does when
+// it issues one background save per edit and reloads the store after a restore.
+// Save moves the live file aside before writing the new one, so an unserialized
+// Load could find neither file and return an empty store, which the next save
+// would then write over the real metadata.
+func TestSave_ConcurrentWithLoad(t *testing.T) {
+	dir := t.TempDir()
+	id := newIdentity(t)
+	const fp = "SHA256:keep"
+
+	base := storage.Store{Keys: map[string]storage.KeyMetadata{fp: testMeta(fp)}}
+	if err := storage.Save(&base, dir, id); err != nil {
+		t.Fatal(err)
+	}
+
+	const rounds = 200
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*rounds)
+	for range rounds {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			s := storage.Store{Keys: map[string]storage.KeyMetadata{fp: testMeta(fp)}}
+			errs <- storage.Save(&s, dir, id)
+		}()
+		go func() {
+			defer wg.Done()
+			s, err := storage.Load(dir, id)
+			if err == nil {
+				if _, ok := s.Keys[fp]; !ok {
+					err = errors.New("Load returned a store without the saved key")
+				}
+			}
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".bak") || strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Errorf("leftover file after concurrent saves: %s", e.Name())
+		}
+	}
+}
+
+// CreateBackup walks ~/.ssh recursively: Include'd fragments and keys kept in
+// subdirectories are archived. A link to a file is archived by content, a link
+// to a directory is reported instead of followed, and a top-level .keyward is
+// reported because it would collide with the vault prefix on restore.
+func TestCreateBackup_Recursive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs extra privileges on Windows")
+	}
+	sshDir, vaultDir := t.TempDir(), t.TempDir()
+	id := newIdentity(t)
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(sshDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("config", "Include config.d/*\n")
+	write("config.d/work", "Host work\n")
+	write("keys/deep/id_x", "key")
+	write("known_hosts", "top-level, excluded")
+	write("config.d/known_hosts", "nested, kept")
+	write(".keyward/stray", "collides")
+
+	outside := filepath.Join(t.TempDir(), "linked_file")
+	if err := os.WriteFile(outside, []byte("via link"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(sshDir, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sshDir, filepath.Join(sshDir, "loop")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := storage.CreateBackup(sshDir, vaultDir, id)
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+	slices.Sort(res.Skipped)
+	if want := []string{".keyward", "loop"}; !slices.Equal(res.Skipped, want) {
+		t.Errorf("Skipped = %v, want %v", res.Skipped, want)
+	}
+
+	restoreTo := t.TempDir()
+	if err := storage.RestoreBackup(res.Path, restoreTo, t.TempDir(), id); err != nil {
+		t.Fatalf("RestoreBackup: %v", err)
+	}
+	for rel, want := range map[string]string{
+		"config.d/work":        "Host work\n",
+		"keys/deep/id_x":       "key",
+		"config.d/known_hosts": "nested, kept",
+		"linked":               "via link",
+	} {
+		got, err := os.ReadFile(filepath.Join(restoreTo, filepath.FromSlash(rel)))
+		if err != nil || string(got) != want {
+			t.Errorf("%s restored as %q (err %v), want %q", rel, got, err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(restoreTo, "known_hosts")); err == nil {
+		t.Error("top-level known_hosts must stay out of the backup")
+	}
+}
+
+// Backup names have one-second resolution. Back-to-back backups (a double 'b',
+// cron plus a manual run) must each get their own file instead of silently
+// replacing the previous archive, and the newest must sort last for pruning.
+func TestCreateBackup_SameSecondKeepsBoth(t *testing.T) {
+	sshDir, vaultDir := t.TempDir(), t.TempDir()
+	id := newIdentity(t)
+	if err := os.WriteFile(filepath.Join(sshDir, "config"), []byte("Host a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var paths []string
+	for range 3 {
+		res, err := storage.CreateBackup(sshDir, vaultDir, id)
+		if err != nil {
+			t.Fatalf("CreateBackup: %v", err)
+		}
+		paths = append(paths, res.Path)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(vaultDir, "backups"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tar.age") {
+			names = append(names, e.Name())
+		}
+	}
+	if len(names) != 3 {
+		t.Fatalf("backups on disk = %v, want 3 distinct archives", names)
+	}
+	if names[len(names)-1] != filepath.Base(paths[2]) {
+		t.Errorf("newest backup %s does not sort last in %v", filepath.Base(paths[2]), names)
+	}
+	for _, p := range paths {
+		if err := storage.RestoreBackup(p, t.TempDir(), t.TempDir(), id); err != nil {
+			t.Errorf("restore %s: %v", filepath.Base(p), err)
+		}
 	}
 }

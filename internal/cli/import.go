@@ -48,6 +48,6 @@ func cmdImport(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "imported %s\n  %s\n", key.PrivateKeyPath, key.Fingerprint)
+	fmt.Fprintf(stdout, "imported %s\n  %s\n", displaySafe(key.PrivateKeyPath), key.Fingerprint)
 	return 0
 }

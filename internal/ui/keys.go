@@ -13,6 +13,7 @@ import (
 // keyListModel renders the main key list screen.
 type keyListModel struct {
 	width, height int
+	offset        int // first visible row; see scrollOffset
 	items         []keyListItem
 	cursor        int
 	searching     bool
@@ -162,6 +163,16 @@ type visibleItem struct {
 	originalIdx int
 }
 
+// listRows is the number of key rows that fit: height minus header (2) minus
+// search bar (2).
+func (m keyListModel) listRows() int { return max(m.height-4, 1) }
+
+// syncScroll stores the scroll window for the current cursor.
+func (m keyListModel) syncScroll() keyListModel {
+	m.offset = scrollOffset(m.offset, m.cursor, m.listRows(), len(m.visible()))
+	return m
+}
+
 func (m keyListModel) visible() []visibleItem {
 	q := strings.ToLower(m.query)
 	var out []visibleItem
@@ -188,17 +199,8 @@ func (m keyListModel) view() string {
 	)
 	header := sectionHeaderStyle.PaddingLeft(0).Width(m.width).Render(hdr)
 
-	// available rows = height minus header (2) minus search bar (2)
-	maxRows := m.height - 4
-	if maxRows < 1 {
-		maxRows = 1
-	}
-
-	// scroll window
-	start := 0
-	if m.cursor >= maxRows {
-		start = m.cursor - maxRows + 1
-	}
+	maxRows := m.listRows()
+	start := scrollOffset(m.offset, m.cursor, maxRows, len(visible))
 	end := start + maxRows
 	if end > len(visible) {
 		end = len(visible)
@@ -236,7 +238,7 @@ func (m keyListModel) view() string {
 func (m keyListModel) renderRow(item visibleItem, selected bool) string {
 	// IdentityPath falls back to the public path so the row is never nameless.
 
-	name := fitLeft(item.key.IdentityPath(), colName)
+	name := fitLeft(safeDisplay(item.key.IdentityPath()), colName)
 	algo := pad(item.key.Algorithm, colAlgo)
 	bits := pad("—", colBits)
 	if item.key.BitSize > 0 {
@@ -287,21 +289,20 @@ func fitLeft(s string, n int) string {
 // exactly, which means a CRLF file carries a trailing '\r'. Printing that resets
 // the cursor to column 0 and overwrites the row already drawn there — and since
 // the panes are joined line by line, the damage spills into the neighbouring
-// pane. An escape sequence in a comment would be worse, so the whole control
-// range goes. Tabs become one space rather than vanishing, so words in a comment
-// do not glue together.
+// pane. An escape sequence in a key comment or file name would be worse (OSC 52
+// rewrites the clipboard), so the whole control range goes, C1 included. Tabs
+// become one space rather than vanishing, so words in a comment do not glue
+// together.
 func safeDisplay(s string) string {
-	needsWork := strings.ContainsFunc(s, func(r rune) bool {
-		return r < 0x20 || r == 0x7f
-	})
-	if !needsWork {
+	isControl := func(r rune) bool { return r < 0x20 || (r >= 0x7f && r <= 0x9f) }
+	if !strings.ContainsFunc(s, isControl) {
 		return s
 	}
 	return strings.Map(func(r rune) rune {
 		switch {
 		case r == '\t':
 			return ' '
-		case r < 0x20 || r == 0x7f:
+		case isControl(r):
 			return -1
 		}
 		return r

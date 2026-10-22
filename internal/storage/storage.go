@@ -8,11 +8,17 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"filippo.io/age"
 	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
+
+// metaMu serializes every read-modify-write of metadata.age and its .bak. Save
+// renames the live file aside before writing the new one, so an unserialized
+// Load, Save or backup read can see the file missing or roll back a newer write.
+var metaMu sync.Mutex
 
 // Init creates the vault directory structure under dir with 0700 permissions.
 func Init(dir string) error {
@@ -42,6 +48,8 @@ func Init(dir string) error {
 // missing OR present-but-corrupt (undecryptable / unparseable), it recovers from
 // the .bak left by a mid-write crash and promotes it to the primary path.
 func Load(dir string, identity age.Identity) (Store, error) {
+	metaMu.Lock()
+	defer metaMu.Unlock()
 
 	metaPath := filepath.Join(dir, metadataFile)
 	bakPath := metaPath + ".bak"
@@ -120,6 +128,9 @@ func Save(s *Store, dir string, identity age.Identity) error {
 
 	metaPath := filepath.Join(dir, metadataFile)
 	bakPath := metaPath + ".bak"
+
+	metaMu.Lock()
+	defer metaMu.Unlock()
 
 	// Move the current file aside so any failure can roll it back.
 	if err := os.Rename(metaPath, bakPath); err != nil && !errors.Is(err, os.ErrNotExist) {

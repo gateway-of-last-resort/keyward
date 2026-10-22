@@ -204,6 +204,7 @@ func MasterKeyExists(path string) bool {
 
 // LoadMasterKey reads path, derives the KEK from password via Argon2id, and returns the decrypted identity.
 func LoadMasterKey(path, password string) (age.Identity, error) {
+	promoted := false
 	_, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		// A crash during a password change or write can leave only the .bak
@@ -218,6 +219,7 @@ func LoadMasterKey(path, password string) (age.Identity, error) {
 		if rnErr := os.Rename(bak, path); rnErr != nil {
 			return nil, fmt.Errorf("%w: %w", ErrCorruptedMasterKey, rnErr)
 		}
+		promoted = true
 	} else if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReadFailed, err)
 	}
@@ -299,6 +301,13 @@ func LoadMasterKey(path, password string) (age.Identity, error) {
 	identity, err := age.ParseX25519Identity(string(decrypted))
 	if err != nil {
 		return nil, ErrCorruptedMasterKey
+	}
+
+	// The primary file unlocked, so a .bak left by an interrupted password change
+	// is no longer needed for recovery. It is the identity under the OLD password,
+	// which may be the very reason the password was changed, so it must not linger.
+	if !promoted {
+		_ = os.Remove(path + ".bak")
 	}
 
 	// Transparently upgrade a legacy v1 file to the authenticated v2 format on

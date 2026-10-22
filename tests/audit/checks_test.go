@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -289,5 +290,56 @@ func TestCheckConfigPermissions(t *testing.T) {
 	}
 	if _, found := hasMessage(runConfigAudit(t, "Host x\n", dir), "SSH config is accessible by group/others"); found {
 		t.Error("0600 config should not be flagged")
+	}
+}
+
+// Keyward can only rotate into Ed25519 or RSA, so the "too old" finding must not
+// tell the owner of an ECDSA key to rotate it with Keyward.
+func TestCheckAge_FixMatchesRotationSupport(t *testing.T) {
+	old := time.Now().AddDate(-2, 0, 0)
+	tests := []struct {
+		algorithm string
+		wantFix   string
+	}{
+		{"ssh-ed25519", "rotate this key"},
+		{"ssh-rsa", "rotate this key"},
+		{"ecdsa-sha2-nistp256", "Generate a new Ed25519 key"},
+		{"sk-ssh-ed25519@openssh.com", "Generate a new Ed25519 key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.algorithm, func(t *testing.T) {
+			k := keys.Key{PublicKeyPath: "/ssh/id.pub", IsPublicOnly: true, Algorithm: tt.algorithm, ModifiedAt: old}
+			var fix string
+			for _, r := range audit.Run([]keys.Key{k}, nil, t.TempDir()).Results {
+				if r.Message == "Key is too old" {
+					fix = r.Fix
+				}
+			}
+			if !strings.Contains(fix, tt.wantFix) {
+				t.Errorf("fix = %q, want it to contain %q", fix, tt.wantFix)
+			}
+		})
+	}
+}
+
+// IdentityFile values that name no fixed file ("none", connection-dependent %h)
+// must not be reported missing, and a quoted path must resolve like ssh does.
+func TestCheckIdentityFile_SpecialValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "my key"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := "Host a\n    IdentityFile none\n" +
+		"Host b\n    IdentityFile ~/.ssh/%h_key\n" +
+		"Host c\n    IdentityFile \"~/.ssh/my key\"\n"
+	if sev, found := hasMessage(runConfigAudit(t, cfg, sshDir), "Identity file does not exist"); found {
+		t.Errorf("unexpected %s 'Identity file does not exist' finding", sev)
 	}
 }
