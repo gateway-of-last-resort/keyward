@@ -3,12 +3,14 @@ package ui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/gateway-of-last-resort/keyward/internal/keys"
 	"github.com/gateway-of-last-resort/keyward/pkg/crypto"
 )
 
@@ -214,6 +216,11 @@ func (m settingsModel) updateEditSSHDir(msg tea.KeyMsg) (settingsModel, tea.Cmd)
 		newDir := strings.TrimSpace(m.sshDirInput.Value())
 		if newDir == "" {
 			m.formErr = fmt.Errorf("SSH directory must not be empty")
+			return m, nil
+		}
+		newDir, err := absUserPath(newDir)
+		if err != nil {
+			m.formErr = fmt.Errorf("cannot use directory: %w", err)
 			return m, nil
 		}
 		// Validate before committing: an unreadable or non-directory path
@@ -433,4 +440,12 @@ func (m settingsModel) viewChangePass() string {
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// absUserPath expands a leading ~ and makes p absolute. The TUI has no shell to
+// expand ~, and the SSH dir is saved to prefs and read back at the next start
+// from whatever directory keyward is launched in, so a relative path would
+// silently point somewhere else.
+func absUserPath(p string) (string, error) {
+	return filepath.Abs(keys.ExpandTilde(p))
 }

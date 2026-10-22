@@ -1557,6 +1557,35 @@ func TestSettings_SSHDirChangeEmitsMsg(t *testing.T) { // §10.9
 	}
 }
 
+// The TUI has no shell to expand ~, and the SSH dir is persisted and read back
+// at the next start from another working directory, so both "~/x" and a
+// relative "x" must be turned into an absolute path before they are used.
+func TestSettings_SSHDirExpandsTildeAndRelative(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	want := filepath.Join(home, "ssh2")
+	if err := os.Mkdir(want, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(home)
+
+	for _, input := range []string{"~/ssh2", "ssh2"} {
+		m := newSettingsModel("master.key", "/ssh", "/vault")
+		m, _ = m.updateMenu(k("down"))
+		m, _ = m.updateMenu(k("enter"))
+		m.sshDirInput.SetValue(input)
+		m, cmd := m.update(k("enter"))
+		if m.formErr != nil {
+			t.Fatalf("%q rejected: %v", input, m.formErr)
+		}
+		msg, ok := runCmd(cmd).(settingsSSHDirChangedMsg)
+		if !ok || msg.sshDir != want {
+			t.Errorf("%q saved as %#v, want %q", input, runCmd(cmd), want)
+		}
+	}
+}
+
 // The SSH directory is edited inline in the menu (no separate screen): enter
 // starts editing and marks the model busy so global tab/q are suppressed; esc
 // cancels back to the menu without navigating away.

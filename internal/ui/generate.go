@@ -199,6 +199,11 @@ func (m generateModel) submit() (generateModel, tea.Cmd) {
 	if dir == "" {
 		dir = m.sshDir
 	}
+	dir, err := absUserPath(dir)
+	if err != nil {
+		m.formErr = err
+		return m, nil
+	}
 	if pass != conf {
 		m.formErr = fmt.Errorf("passphrases do not match")
 		return m, nil
@@ -325,6 +330,9 @@ func (m generateModel) view() string {
 	dir := m.inputs[inDir].Value()
 	if dir == "" {
 		dir = m.sshDir
+	}
+	if abs, err := absUserPath(dir); err == nil {
+		dir = abs
 	}
 	filename := m.inputs[inFilename].Value()
 	if filename != "" {
