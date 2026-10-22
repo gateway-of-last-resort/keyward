@@ -197,6 +197,25 @@ func TestDuplicateBlock_ReturnsFalseOutOfRange(t *testing.T) {
 	}
 }
 
+// Duplicating a Match block must rewrite its header line too, or the copy keeps
+// the old criteria on disk while Pattern claims the new ones.
+func TestDuplicateBlock_RewritesMatchHeader(t *testing.T) {
+	c := config.ParseBytes("cfg", []byte("Match host a\n    User x\n"))
+	if !config.DuplicateBlock(&c, 0, "host b") {
+		t.Fatal("DuplicateBlock returned false")
+	}
+	reparsed := config.ParseBytes("cfg", config.Serialize(&c))
+	if len(reparsed.Blocks) != 2 {
+		t.Fatalf("blocks after round trip = %d, want 2", len(reparsed.Blocks))
+	}
+	if got := reparsed.Blocks[1].Pattern; got != "host b" {
+		t.Errorf("copy's header on disk = %q, want %q", got, "host b")
+	}
+	if !reparsed.Blocks[1].IsMatch {
+		t.Error("copy is no longer a Match block")
+	}
+}
+
 // ── MoveBlock ─────────────────────────────────────────────────────────────────
 
 func TestMoveBlock_MovesToIndex(t *testing.T) {

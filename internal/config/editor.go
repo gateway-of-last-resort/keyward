@@ -66,9 +66,10 @@ func DuplicateBlock(c *Config, idx int, newPattern string) bool {
 	newBlock.Tokens = append([]Token{}, c.Blocks[idx].Tokens...)
 	newBlock.Pattern = newPattern
 	for i := range newBlock.Tokens {
-		if newBlock.Tokens[i].Type == HOST {
+		if newBlock.Tokens[i].Type == HOST || newBlock.Tokens[i].Type == MATCH {
 			newBlock.Tokens[i].Value = newPattern
 			newBlock.Tokens[i].Raw = ""
+			break
 		}
 	}
 	c.Blocks = append(c.Blocks, newBlock)
