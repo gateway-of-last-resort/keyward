@@ -216,12 +216,17 @@ func checkAge(key keys.Key) []AuditResult {
 
 	if !key.ModifiedAt.IsZero() {
 		if time.Since(key.ModifiedAt) > maxKeyAge {
+			fix := "Use Keyward to rotate this key" //(press 'r')
+			if !keys.Algorithm(key.Algorithm).IsValid() {
+				// Keyward can only rotate into Ed25519 or RSA.
+				fix = "Generate a new Ed25519 key with Keyward and replace this one"
+			}
 			results = append(results, AuditResult{
 				KeyPath:  keyPath,
 				Severity: Warning,
 				Category: CategoryKey,
 				Message:  "Key is too old",
-				Fix:      "Use Keyward to rotate this key", //(press 'r')
+				Fix:      fix,
 			})
 		}
 	}

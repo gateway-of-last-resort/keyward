@@ -456,7 +456,7 @@ func TestUnparseableKey_AuditFindingsReachTheUI(t *testing.T) {
 func TestDetail_AgentAndRotateRequireUsablePrivateKey(t *testing.T) {
 	usable := keys.Key{
 		PrivateKeyPath: "/ssh/id_ok", PublicKeyPath: "/ssh/id_ok.pub",
-		Fingerprint: "SHA256:ok", HasPassphrase: true,
+		Algorithm: "ssh-ed25519", Fingerprint: "SHA256:ok", HasPassphrase: true,
 	}
 	publicOnly := keys.Key{
 		PublicKeyPath: "/ssh/id_pub.pub", IsPublicOnly: true, Fingerprint: "SHA256:pub",
@@ -1293,6 +1293,34 @@ func TestConfig_CreatedConfigSurvivesTabSwitch(t *testing.T) {
 	}
 	if len(m.cfgEditor.cfg.Blocks) != 1 || m.cfgEditor.cfg.Blocks[0].Pattern != "staging" {
 		t.Fatalf("unsaved block lost after a tab switch: %+v", m.cfgEditor.cfg.Blocks)
+	}
+}
+
+// Rotation generates only Ed25519 and RSA keys, so for any other algorithm 'r'
+// must not open the form (it failed every time) and the hint must not offer it.
+func TestDetail_RotateOnlyForSupportedAlgorithms(t *testing.T) {
+	tests := []struct {
+		algorithm string
+		want      bool
+	}{
+		{"ssh-ed25519", true},
+		{"ssh-rsa", true},
+		{"ecdsa-sha2-nistp256", false},
+		{"ssh-dss", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.algorithm, func(t *testing.T) {
+			key := keys.Key{PrivateKeyPath: "/ssh/id_x", PublicKeyPath: "/ssh/id_x.pub", Algorithm: tt.algorithm, Fingerprint: "SHA256:x"}
+			m := newKeyDetailModel(key, nil, nil, false)
+			m, _ = m.update(k("r"))
+			if m.confirmRotate != tt.want {
+				t.Errorf("rotate form opened = %v, want %v", m.confirmRotate, tt.want)
+			}
+			m.confirmRotate = false
+			if got := strings.Contains(m.hints(), "r rotate"); got != tt.want {
+				t.Errorf("hint offers rotate = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

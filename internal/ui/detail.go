@@ -123,8 +123,18 @@ func (m keyDetailModel) hints() string {
 	case m.confirmDelete:
 		return "d  confirm delete  ·  esc  cancel"
 	default:
+		if !m.canRotate() {
+			return "c copy pubkey  ·  e edit  ·  A add to agent  ·  d delete  ·  esc back"
+		}
 		return "c copy pubkey  ·  e edit  ·  A add to agent  ·  r rotate  ·  d delete  ·  esc back"
 	}
+}
+
+// canRotate reports whether rotation can run for this key: RotateKey needs a
+// usable private file, and GenerateKeys only produces Ed25519 and RSA, so an
+// ECDSA, DSA or security-key pair would fail every time.
+func (m keyDetailModel) canRotate() bool {
+	return m.key.PrivateKeyPath != "" && keys.Algorithm(m.key.Algorithm).IsValid()
 }
 
 func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
@@ -165,8 +175,7 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 			}
 			return m, addToAgentCmd(m.key, nil)
 		case "r":
-			// keys.RotateKey rejects an empty private path, so refuse before the form.
-			if m.key.PrivateKeyPath == "" {
+			if !m.canRotate() {
 				break
 			}
 			m.confirmDelete = false
