@@ -219,3 +219,31 @@ func writeStalePub(t *testing.T, dest string) {
 		t.Fatal(err)
 	}
 }
+
+// Overwriting an existing file must leave the imported private key at 0600 even
+// when the file it replaced was world-readable: OpenFile's perm only applies to
+// files it creates.
+func TestImportKey_ForceResetsMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are synthetic on Windows")
+	}
+	src := makeSourceKey(t, "id_force")
+	dest := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dest, "id_force"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dest, "id_force"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := keys.ImportKey(dest, src, keys.ImportOptions{Overwrite: true}); err != nil {
+		t.Fatalf("ImportKey: %v", err)
+	}
+	fi, err := os.Stat(filepath.Join(dest, "id_force"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("imported key mode = %04o, want 0600", got)
+	}
+}
