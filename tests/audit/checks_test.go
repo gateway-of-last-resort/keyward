@@ -321,3 +321,25 @@ func TestCheckAge_FixMatchesRotationSupport(t *testing.T) {
 		})
 	}
 }
+
+// IdentityFile values that name no fixed file ("none", connection-dependent %h)
+// must not be reported missing, and a quoted path must resolve like ssh does.
+func TestCheckIdentityFile_SpecialValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "my key"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := "Host a\n    IdentityFile none\n" +
+		"Host b\n    IdentityFile ~/.ssh/%h_key\n" +
+		"Host c\n    IdentityFile \"~/.ssh/my key\"\n"
+	if sev, found := hasMessage(runConfigAudit(t, cfg, sshDir), "Identity file does not exist"); found {
+		t.Errorf("unexpected %s 'Identity file does not exist' finding", sev)
+	}
+}

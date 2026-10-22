@@ -12,7 +12,6 @@ package config
 
 import (
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -51,14 +50,10 @@ func ValidateBlock(b *Block) []ValidationResult {
 	if found {
 		for _, file := range identityFile {
 
-			path := file.Value
-			if strings.HasPrefix(path, "~/") {
-				home, err := os.UserHomeDir()
-				if err == nil {
-					path = filepath.Join(home, path[2:])
-				}
+			path, ok := ExpandPath(file.Value)
+			if !ok {
+				continue
 			}
-			path = os.ExpandEnv(path)
 			stat, err := os.Stat(path)
 
 			if os.IsNotExist(err) {
