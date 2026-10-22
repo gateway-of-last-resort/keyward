@@ -72,9 +72,10 @@ type Model struct {
 	// fingerprints currently loaded in the ssh-agent (empty if none/no agent)
 	agentLoaded map[string]bool
 
-	// non-fatal error shown in status bar; errToken guards the auto-dismiss
-	// timer so a stale tick can't clear a newer error early.
+	// non-fatal error or notice shown in status bar; errToken guards the
+	// auto-dismiss timer so a stale tick can't clear a newer message early.
 	err      error
+	notice   string
 	errToken int
 
 	// saver orders background metadata saves; a pointer so every copy of the
@@ -330,6 +331,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.err = nil
+		m.notice = ""
 
 	case vaultReadyMsg:
 		s := msg.store
@@ -345,12 +347,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.err = msg.err
+		m.notice = ""
 		m.errToken++
 		return m, clearErrAfter(m.errToken)
 
 	case clearErrMsg:
 		if msg.token == m.errToken {
 			m.err = nil
+			m.notice = ""
 		}
 		return m, nil
 
@@ -366,6 +370,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, refreshAgentCmd()
 
 	case keyGeneratedMsg:
+		// The form lets the key go to any directory. One outside the SSH dir
+		// would vanish from the list at the next rescan, so say where it went
+		// instead of listing it for now.
+		if filepath.Clean(filepath.Dir(msg.key.PrivateKeyPath)) != filepath.Clean(m.sshDir) {
+			// The status bar has one line; trim the path from the left so the
+			// file name stays visible and the line never widens the frame.
+			const format = "key saved to %s (outside the SSH dir, so not shown in the list)"
+			width := max(m.innerWidth()-lipgloss.Width(noticePrefix+fmt.Sprintf(format, "")), 12)
+			m.notice = fmt.Sprintf(format, fitLeft(msg.key.PrivateKeyPath, width))
+			m.errToken++
+			return m, tea.Batch(clearErrAfter(m.errToken), navigate(ScreenKeys))
+		}
 		m.keys = append(m.keys, msg.key)
 		m.report = audit.Run(m.keys, m.cfg, m.sshDir)
 		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
@@ -796,6 +812,9 @@ func (m Model) statusBar() string {
 	if m.err != nil {
 		return sep + "\n" + errorBarStyle.Render("✗  "+m.err.Error())
 	}
+	if m.notice != "" {
+		return sep + "\n" + warnMsgStyle.Render(noticePrefix+m.notice)
+	}
 	switch m.active {
 	case ScreenDetail:
 		return sep + "\n" + statusBarStyle.Render(m.keyDetail.hints())
@@ -808,6 +827,10 @@ func (m Model) statusBar() string {
 	}
 	return sep + "\n" + statusBarStyle.Render(screenHint(m.active))
 }
+
+// noticePrefix marks a status-bar notice: something the user should know that
+// is not a failure, shown in the same yellow as the screens' own notices.
+const noticePrefix = "⚠  "
 
 func screenHint(s Screen) string {
 	nav := "tab / shift+tab  switch screens"

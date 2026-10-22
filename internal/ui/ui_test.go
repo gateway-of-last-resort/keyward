@@ -511,6 +511,45 @@ func TestDetail_AgentPassphraseClearedFromModel(t *testing.T) {
 	}
 }
 
+// A key generated into another directory must not join the list (it vanished at
+// the next rescan); a notice, not an error, tells the user where it went, and the
+// next key press dismisses it.
+func TestGenerate_KeyOutsideSSHDirNotListed(t *testing.T) {
+	m := Model{active: ScreenGenerate, sshDir: "/home/u/.ssh", width: 100, height: 30}
+	outside := keys.Key{PrivateKeyPath: "/tmp/keys/id_x", PublicKeyPath: "/tmp/keys/id_x.pub", Fingerprint: "SHA256:x"}
+
+	next, _ := m.Update(keyGeneratedMsg{key: outside})
+	m = next.(Model)
+	if len(m.keys) != 0 {
+		t.Fatalf("key outside the SSH dir was listed: %+v", m.keys)
+	}
+	if m.err != nil {
+		t.Fatalf("a successful generation must not be reported as an error: %v", m.err)
+	}
+	if !strings.Contains(m.notice, "/tmp/keys/id_x") {
+		t.Fatalf("expected a notice naming the key's path; got %q", m.notice)
+	}
+	if bar := m.statusBar(); !strings.Contains(bar, noticePrefix+"key saved to /tmp/keys/id_x") {
+		t.Fatalf("status bar does not show the notice: %q", bar)
+	}
+	if after, _ := m.Update(k("j")); after.(Model).notice != "" {
+		t.Error("the notice should be dismissed by the next key press")
+	}
+	// A long path must not push the status line past the frame.
+	long := keys.Key{PrivateKeyPath: "/" + strings.Repeat("deep/", 40) + "id_z", Fingerprint: "SHA256:z"}
+	next, _ = m.Update(keyGeneratedMsg{key: long})
+	if bar := next.(Model).statusBar(); lipgloss.Width(strings.Split(bar, "\n")[1]) > m.innerWidth() {
+		t.Fatalf("status line wider than the frame (%d > %d): %q",
+			lipgloss.Width(strings.Split(bar, "\n")[1]), m.innerWidth(), bar)
+	}
+
+	inside := keys.Key{PrivateKeyPath: "/home/u/.ssh/id_y", PublicKeyPath: "/home/u/.ssh/id_y.pub", Fingerprint: "SHA256:y"}
+	next, _ = m.Update(keyGeneratedMsg{key: inside})
+	if got := next.(Model).keys; len(got) != 1 || got[0].PrivateKeyPath != inside.PrivateKeyPath {
+		t.Fatalf("key inside the SSH dir should be listed; got %+v", got)
+	}
+}
+
 // TestKeyMetaUpdated_MatchesByIdentity: the handler used to find the edited key by
 // raw PrivateKeyPath, so two keys without one both matched the first entry and the
 // detail screen was rebuilt from the wrong key.
