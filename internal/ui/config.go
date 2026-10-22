@@ -25,6 +25,10 @@ type configModel struct {
 	paramCursor int  // selected token index in visible paramTokens list
 	paneRight   bool // focus is on the right pane (token list)
 
+	// first visible row of each pane; see scrollOffset
+	blockOffset int
+	paramOffset int
+
 	// inline value editing
 	editing   bool
 	editInput textinput.Model
@@ -494,6 +498,41 @@ func (m configModel) createConfig() (configModel, tea.Cmd) {
 // new config and any unsaved edits vanished on the next tab switch.
 type configCreatedMsg struct{ cfg *config.Config }
 
+// blockRows is the number of host rows that fit in the left pane, less one
+// while the add-host input is open.
+func (m configModel) blockRows() int {
+	rows := max(m.height-4, 1)
+	if m.addingBlock {
+		rows--
+	}
+	return max(rows, 1)
+}
+
+// paramRows is the number of parameter rows that fit in the right pane, less
+// two while the add-parameter inputs are open.
+func (m configModel) paramRows() int {
+	rows := max(m.height-4, 1)
+	if m.addingParam {
+		rows -= 2
+	}
+	return max(rows, 1)
+}
+
+// syncScroll stores both panes' scroll windows for the current cursors.
+func (m configModel) syncScroll() configModel {
+	if m.cfg == nil {
+		m.blockOffset, m.paramOffset = 0, 0
+		return m
+	}
+	m.blockOffset = scrollOffset(m.blockOffset, m.blockCursor, m.blockRows(), len(m.cfg.Blocks))
+	params := 0
+	if m.blockCursor < len(m.cfg.Blocks) {
+		params = len(paramTokens(m.cfg.Blocks[m.blockCursor]))
+	}
+	m.paramOffset = scrollOffset(m.paramOffset, m.paramCursor, m.paramRows(), params)
+	return m
+}
+
 // withConfig swaps in a freshly loaded config while keeping the editor's
 // selection and status line, clamping the cursors to the new config.
 func (m configModel) withConfig(cfg *config.Config) configModel {
@@ -705,17 +744,8 @@ func (m configModel) renderBlocks(width int) string {
 	var sb strings.Builder
 	sb.WriteString(header + "\n")
 
-	avail := m.height - 4
-	if avail < 1 {
-		avail = 1
-	}
-	if m.addingBlock {
-		avail-- // reserve one line for the input
-	}
-	start := 0
-	if m.blockCursor >= avail {
-		start = m.blockCursor - avail + 1
-	}
+	avail := m.blockRows()
+	start := scrollOffset(m.blockOffset, m.blockCursor, avail, len(m.cfg.Blocks))
 	end := start + avail
 	if end > len(m.cfg.Blocks) {
 		end = len(m.cfg.Blocks)
@@ -782,17 +812,8 @@ func (m configModel) renderParams(width int) string {
 	blk := m.cfg.Blocks[m.blockCursor]
 	tokens := paramTokens(blk)
 
-	avail := m.height - 4
-	if avail < 1 {
-		avail = 1
-	}
-	if m.addingParam {
-		avail -= 2 // reserve two lines for key+value inputs
-	}
-	start := 0
-	if m.paramCursor >= avail {
-		start = m.paramCursor - avail + 1
-	}
+	avail := m.paramRows()
+	start := scrollOffset(m.paramOffset, m.paramCursor, avail, len(tokens))
 	end := start + avail
 	if end > len(tokens) {
 		end = len(tokens)

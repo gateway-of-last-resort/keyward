@@ -13,6 +13,7 @@ import (
 // keyListModel renders the main key list screen.
 type keyListModel struct {
 	width, height int
+	offset        int // first visible row; see scrollOffset
 	items         []keyListItem
 	cursor        int
 	searching     bool
@@ -162,6 +163,16 @@ type visibleItem struct {
 	originalIdx int
 }
 
+// listRows is the number of key rows that fit: height minus header (2) minus
+// search bar (2).
+func (m keyListModel) listRows() int { return max(m.height-4, 1) }
+
+// syncScroll stores the scroll window for the current cursor.
+func (m keyListModel) syncScroll() keyListModel {
+	m.offset = scrollOffset(m.offset, m.cursor, m.listRows(), len(m.visible()))
+	return m
+}
+
 func (m keyListModel) visible() []visibleItem {
 	q := strings.ToLower(m.query)
 	var out []visibleItem
@@ -188,17 +199,8 @@ func (m keyListModel) view() string {
 	)
 	header := sectionHeaderStyle.PaddingLeft(0).Width(m.width).Render(hdr)
 
-	// available rows = height minus header (2) minus search bar (2)
-	maxRows := m.height - 4
-	if maxRows < 1 {
-		maxRows = 1
-	}
-
-	// scroll window
-	start := 0
-	if m.cursor >= maxRows {
-		start = m.cursor - maxRows + 1
-	}
+	maxRows := m.listRows()
+	start := scrollOffset(m.offset, m.cursor, maxRows, len(visible))
 	end := start + maxRows
 	if end > len(visible) {
 		end = len(visible)

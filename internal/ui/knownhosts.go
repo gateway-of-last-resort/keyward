@@ -17,6 +17,7 @@ type knownHostsModel struct {
 	width, height int
 	entries       []knownhosts.Entry
 	cursor        int
+	offset        int // first visible row; see scrollOffset
 	sshDir        string
 	path          string
 	confirmForget bool
@@ -84,6 +85,16 @@ func (m knownHostsModel) update(msg tea.Msg) (knownHostsModel, tea.Cmd) {
 	return m, nil
 }
 
+// listRows is the number of entry rows that fit: height minus header (1) minus
+// the confirm/hint line (2).
+func (m knownHostsModel) listRows() int { return max(m.height-3, 1) }
+
+// syncScroll stores the scroll window for the current cursor.
+func (m knownHostsModel) syncScroll() knownHostsModel {
+	m.offset = scrollOffset(m.offset, m.cursor, m.listRows(), len(m.entries))
+	return m
+}
+
 // khHostLabel returns a short display label for an entry's host field.
 func khHostLabel(e knownhosts.Entry) string {
 	if e.Hashed {
@@ -121,15 +132,8 @@ func (m knownHostsModel) view() string {
 		return sb.String()
 	}
 
-	// available rows = height minus header (1) minus confirm/hint line (2)
-	maxRows := m.height - 3
-	if maxRows < 1 {
-		maxRows = 1
-	}
-	start := 0
-	if m.cursor >= maxRows {
-		start = m.cursor - maxRows + 1
-	}
+	maxRows := m.listRows()
+	start := scrollOffset(m.offset, m.cursor, maxRows, len(m.entries))
 	end := start + maxRows
 	if end > len(m.entries) {
 		end = len(m.entries)

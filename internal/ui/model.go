@@ -542,7 +542,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case khForgotMsg:
 		// Re-read known_hosts and rebuild the screen so the removed entry is
 		// gone; keep the cursor in range and restore sizing.
-		cursor := m.knownHosts.cursor
+		cursor, offset := m.knownHosts.cursor, m.knownHosts.offset
 		path := m.knownHosts.path
 		entries, err := knownhosts.Parse(path)
 		if err != nil {
@@ -556,8 +556,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cursor < 0 {
 			cursor = 0
 		}
-		m.knownHosts.cursor = cursor
+		m.knownHosts.cursor, m.knownHosts.offset = cursor, offset
 		m = m.propagateSize()
+		m.knownHosts = m.knownHosts.syncScroll()
 		if msg.err != nil {
 			m.err = fmt.Errorf("%s not forgotten: %w; the list was reloaded", msg.host, msg.err)
 			m.errToken++
@@ -649,14 +650,17 @@ func (m Model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.unlockView, cmd = m.unlockView.update(msg)
 	case ScreenKeys:
 		m.keyList, cmd = m.keyList.update(msg)
+		m.keyList = m.keyList.syncScroll()
 	case ScreenDetail:
 		m.keyDetail, cmd = m.keyDetail.update(msg)
 	case ScreenAudit:
 		m.auditView, cmd = m.auditView.update(msg)
+		m.auditView = m.auditView.syncScroll()
 	case ScreenGenerate:
 		m.genForm, cmd = m.genForm.update(msg)
 	case ScreenConfig:
 		m.cfgEditor, cmd = m.cfgEditor.update(msg)
+		m.cfgEditor = m.cfgEditor.syncScroll()
 		if m.cfgEditor.saved {
 			m.cfgEditor.saved = false
 			// The config on disk just changed; re-scan and re-run the audit so the
@@ -666,6 +670,7 @@ func (m Model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case ScreenKnownHosts:
 		m.knownHosts, cmd = m.knownHosts.update(msg)
+		m.knownHosts = m.knownHosts.syncScroll()
 	case ScreenBackup:
 		m.backupView, cmd = m.backupView.update(msg)
 	case ScreenSettings:

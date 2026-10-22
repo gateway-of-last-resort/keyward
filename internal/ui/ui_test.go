@@ -1482,6 +1482,73 @@ func TestConfig_SaveKeepsStatusAndCursor(t *testing.T) {
 	}
 }
 
+func TestScrollOffset(t *testing.T) {
+	tests := []struct {
+		name                        string
+		offset, cursor, rows, total int
+		want                        int
+	}{
+		{"fits on screen", 0, 3, 10, 5, 0},
+		{"inside the window", 4, 8, 10, 30, 4},
+		{"past the bottom edge", 4, 14, 10, 30, 5},
+		{"above the top edge", 6, 3, 10, 30, 3},
+		{"list shrank under the window", 20, 4, 10, 12, 2},
+		{"zero rows treated as one", 0, 7, 0, 30, 7},
+	}
+	for _, tt := range tests {
+		if got := scrollOffset(tt.offset, tt.cursor, tt.rows, tt.total); got != tt.want {
+			t.Errorf("%s: scrollOffset(%d, %d, %d, %d) = %d, want %d",
+				tt.name, tt.offset, tt.cursor, tt.rows, tt.total, got, tt.want)
+		}
+	}
+}
+
+// A long list must scroll only when the cursor reaches an edge of the window.
+// The window used to be recomputed from the cursor on every frame, so once the
+// cursor went below the screen it stayed pinned to the bottom row and moving up
+// scrolled the list instead of moving the cursor.
+func TestKeys_ScrollMovesOnlyAtEdges(t *testing.T) {
+	var ks []keys.Key
+	for i := range 30 {
+		ks = append(ks, keys.Key{PublicKeyPath: fmt.Sprintf("/ssh/k%02d.pub", i), IsPublicOnly: true})
+	}
+	m := Model{active: ScreenKeys, keys: ks, sshDir: "/ssh", width: 120, height: 22}
+	m.keyList = newKeyListModel(ks, nil, "/ssh")
+	m = m.propagateSize()
+	rows := m.keyList.listRows()
+
+	press := func(key string, n int) {
+		for range n {
+			next, _ := m.Update(k(key))
+			m = next.(Model)
+		}
+	}
+	firstRow := func() string {
+		for _, line := range strings.Split(m.keyList.view(), "\n") {
+			if i := strings.Index(line, "/ssh/k"); i >= 0 {
+				return line[i : i+len("/ssh/k00")]
+			}
+		}
+		return ""
+	}
+
+	press("down", rows+5) // cursor below the first screen: the window follows
+	wantTop := fmt.Sprintf("/ssh/k%02d", rows+5-rows+1)
+	if got := firstRow(); got != wantTop {
+		t.Fatalf("after scrolling down the first row = %s, want %s", got, wantTop)
+	}
+
+	press("up", rows-1) // back up to the top edge: the cursor moves, the list stays
+	if got := firstRow(); got != wantTop {
+		t.Errorf("moving up inside the window scrolled it: first row %s, want %s", got, wantTop)
+	}
+
+	press("up", 1) // one more crosses the top edge: now it scrolls by one
+	if got, want := firstRow(), fmt.Sprintf("/ssh/k%02d", rows+5-rows); got != want {
+		t.Errorf("crossing the top edge: first row %s, want %s", got, want)
+	}
+}
+
 // ── §9 backup restore bounds ────────────────────────────────────────────────
 
 // §9.5 — out-of-range restore selection reports an error, never crashes.

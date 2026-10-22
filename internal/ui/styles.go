@@ -185,3 +185,18 @@ func lerpColor(r1, g1, b1, r2, g2, b2 int, t float64) lipgloss.Color {
 	lerp := func(a, b int) int { return a + int(float64(b-a)*t+0.5) }
 	return lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", lerp(r1, r2), lerp(g1, g2), lerp(b1, b2)))
 }
+
+// scrollOffset returns the first row of a rows-high window over total items that
+// keeps cursor visible. The window moves only when the cursor crosses its top or
+// bottom edge, so moving back up a long list walks the cursor up the screen
+// instead of scrolling with it pinned to the bottom row.
+func scrollOffset(offset, cursor, rows, total int) int {
+	rows = max(rows, 1)
+	if cursor < offset {
+		offset = cursor
+	}
+	if cursor >= offset+rows {
+		offset = cursor - rows + 1
+	}
+	return max(0, min(offset, total-rows))
+}

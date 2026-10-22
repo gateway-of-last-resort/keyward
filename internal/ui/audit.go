@@ -15,6 +15,16 @@ type auditModel struct {
 	width, height int
 	report        audit.AuditReport
 	cursor        int
+	offset        int // first visible finding; see scrollOffset
+}
+
+// listRows is the number of finding rows that fit below the summary.
+func (m auditModel) listRows() int { return max(m.height-8, 1) }
+
+// syncScroll stores the scroll window for the current cursor.
+func (m auditModel) syncScroll() auditModel {
+	m.offset = scrollOffset(m.offset, m.cursor, m.listRows(), len(m.report.Results))
+	return m
 }
 
 func newAuditModel(report audit.AuditReport) auditModel {
@@ -93,14 +103,8 @@ func (m auditModel) view() string {
 	sb.WriteString(dimStyle.Render(strings.Repeat("─", m.width)) + "\n")
 
 	// ── Findings list ──────────────────────────────────────────────────────────
-	maxRows := m.height - 8
-	if maxRows < 1 {
-		maxRows = 1
-	}
-	start := 0
-	if m.cursor >= maxRows {
-		start = m.cursor - maxRows + 1
-	}
+	maxRows := m.listRows()
+	start := scrollOffset(m.offset, m.cursor, maxRows, len(r.Results))
 	end := start + maxRows
 	if end > len(r.Results) {
 		end = len(r.Results)
