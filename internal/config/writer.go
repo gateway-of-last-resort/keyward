@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -199,28 +200,41 @@ func rotateBackup(dir string) error {
 	return errors.Join(errs...)
 }
 
+// ErrPruneFailed means the config was saved but old history copies could not be
+// removed. Callers should report it as a warning, not as a failed save.
+var ErrPruneFailed = errors.New("config saved, but old backups could not be removed")
+
 // Save serialises c to disk, creates backups, rotates old backup copies, and clears Modified.
+// Once the file is written the save has happened: a pruning failure after that
+// comes back wrapped in ErrPruneFailed with Modified and Original already updated.
 func Save(c *Config) error {
-
-	if err := backup(c.Path); err != nil {
-		return err
-	}
 	data := Serialize(c)
-	if err := WriteAtomic(c.Path, data); err != nil {
+	if err := saveFile(c.Path, data); err != nil {
 		return err
 	}
+	c.Modified = false
+	c.Original = data
 
+	if err := pruneHistory(); err != nil {
+		return fmt.Errorf("%w: %w", ErrPruneFailed, err)
+	}
+	return nil
+}
+
+// saveFile backs up the current contents of path and atomically replaces them
+// with data.
+func saveFile(path string, data []byte) error {
+	if err := backup(path); err != nil {
+		return err
+	}
+	return WriteAtomic(path, data)
+}
+
+// pruneHistory keeps only the newest config history copies.
+func pruneHistory() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-
-	backupDir := filepath.Join(home, ".keyward", "backups", "config")
-	if err := rotateBackup(backupDir); err != nil {
-		return err
-	}
-
-	c.Modified = false
-	c.Original = data
-	return nil
+	return rotateBackup(filepath.Join(home, ".keyward", "backups", "config"))
 }
