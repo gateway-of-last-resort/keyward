@@ -209,7 +209,7 @@ func (m generateModel) submit() (generateModel, tea.Cmd) {
 		return m, nil
 	}
 	if pass == "" && !m.allowEmpty {
-		m.formErr = fmt.Errorf("passphrase is empty — enable 'Allow empty passphrase' to proceed")
+		m.formErr = fmt.Errorf("passphrase is empty: enable 'Allow empty passphrase' to proceed")
 		return m, nil
 	}
 
@@ -323,7 +323,7 @@ func (m generateModel) view() string {
 
 	// ── Passphrase risk warning ───────────────────────
 	if m.allowEmpty {
-		sb.WriteString("\n  " + formErrorStyle.Render("⚠  key will be stored unencrypted — suitable for CI/deploy keys only") + "\n")
+		sb.WriteString("\n  " + formErrorStyle.Render("⚠  key will be stored unencrypted, suitable for CI/deploy keys only") + "\n")
 	}
 
 	// ── Output dir preview ───────────────────────────

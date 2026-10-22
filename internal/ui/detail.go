@@ -27,7 +27,6 @@ type keyDetailModel struct {
 	key           keys.Key
 	findings      []audit.AuditResult
 	meta          *storage.KeyMetadata
-	copied        bool
 	confirmDelete bool
 
 	// rotation form
@@ -90,7 +89,6 @@ var (
 
 	detailValueStyle = lipgloss.NewStyle().Foreground(colText)
 
-	copiedStyle  = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
 	warnMsgStyle = lipgloss.NewStyle().Foreground(colYellow).Bold(true)
 
 	tagSelectedStyle = lipgloss.NewStyle().Foreground(ColorMint).Bold(true)
@@ -130,6 +128,22 @@ func (m keyDetailModel) hints() string {
 	}
 }
 
+// confirmPrompt is the pending delete question, shown in the message area; the
+// keys that answer it are in the hints right below.
+func (m keyDetailModel) confirmPrompt() string {
+	if !m.confirmDelete {
+		return ""
+	}
+	// Name the unrecognised file: nothing else on this screen shows it, so the
+	// user would not know it is about to be removed.
+	what := "delete key files?"
+	if m.key.UnparsedPrivatePath != "" {
+		what = "delete key files, including the unrecognized " +
+			safeDisplay(filepath.Base(m.key.UnparsedPrivatePath)) + "?"
+	}
+	return what
+}
+
 // canRotate reports whether rotation can run for this key: RotateKey needs a
 // usable private file, and GenerateKeys only produces Ed25519 and RSA, so an
 // ECDSA, DSA or security-key pair would fail every time.
@@ -149,7 +163,6 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 		if m.addingAgent {
 			return m.updateAgentPrompt(msg)
 		}
-		m.copied = false
 		switch msg.String() {
 		case "e":
 			if !m.confirmDelete && m.key.Fingerprint != "" {
@@ -161,9 +174,9 @@ func (m keyDetailModel) update(msg tea.Msg) (keyDetailModel, tea.Cmd) {
 				pubPath = m.key.PrivateKeyPath + ".pub"
 			}
 			if err := copyPubKey(pubPath); err != nil {
-				return m, func() tea.Msg { return errMsg{err} }
+				return m, func() tea.Msg { return errMsg{fmt.Errorf("cannot copy the public key: %w", err)} }
 			}
-			m.copied = true
+			return m, showStatus(statusSuccess, "public key copied to clipboard")
 		case "A":
 			// A public-only or unrecognised key has a fingerprint (read off the .pub)
 			// but no usable private key, so the agent has nothing to load.
@@ -505,7 +518,7 @@ func (m keyDetailModel) view() string {
 	sb.WriteString(title + "\n\n")
 
 	field := func(lbl, val string) {
-		fmt.Fprintf(&sb, "%s  %s\n",
+		fmt.Fprintf(&sb, " %s  %s\n",
 			detailLabelStyle.Render(lbl),
 			detailValueStyle.Render(val),
 		)
@@ -551,7 +564,7 @@ func (m keyDetailModel) view() string {
 		sb.WriteString("\n" + sectionHeaderStyle.Width(m.width).Render("Add to ssh-agent") + "\n\n")
 		fmt.Fprintf(&sb, "%s%s  %s\n", rowGutter(true), detailLabelStyle.Render("Passphrase"), m.agentPass.View())
 		if m.agentPassErr != "" {
-			sb.WriteString("\n" + warnMsgStyle.Render(m.agentPassErr))
+			sb.WriteString("\n" + formErrorStyle.Render("  ✗  "+m.agentPassErr))
 		}
 		return sb.String()
 	}
@@ -575,7 +588,7 @@ func (m keyDetailModel) view() string {
 			field("Tags", dimStyle.Render("none"))
 		}
 		if m.meta.Note != "" {
-			const labelWidth = 18 + 2 // detailLabelStyle.Width + separator
+			const labelWidth = 1 + 18 + 2 // gutter + detailLabelStyle.Width + separator
 			const rightMargin = 30
 			wrapWidth := m.width - labelWidth - rightMargin
 			lines := wrapText(m.meta.Note, wrapWidth)
@@ -600,20 +613,6 @@ func (m keyDetailModel) view() string {
 				fmt.Fprintf(&sb, "            %s\n", dimStyle.Render("fix: "+safeDisplay(f.Fix)))
 			}
 		}
-	}
-
-	switch {
-	case m.copied:
-		sb.WriteString("\n" + copiedStyle.Render("✓ public key copied to clipboard"))
-	case m.confirmDelete:
-		// Name the unrecognised file: until now nothing on this screen showed it,
-		// so the user would not know it is about to be removed.
-		prompt := "delete key files?"
-		if k.UnparsedPrivatePath != "" {
-			prompt = "delete key files, including the unrecognized " +
-				safeDisplay(filepath.Base(k.UnparsedPrivatePath)) + "?"
-		}
-		sb.WriteString("\n" + warnMsgStyle.Render(prompt+" press d again to confirm · esc to cancel"))
 	}
 
 	return sb.String()

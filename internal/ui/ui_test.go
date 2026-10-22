@@ -7,6 +7,7 @@ package ui
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -80,6 +81,26 @@ func runCmd(cmd tea.Cmd) tea.Msg {
 
 // sendRoot feeds a key into the root Model and, if the resulting command is a
 // single navigateMsg, applies it so the active screen actually switches.
+// applyCmd runs cmd (one level of a batch) and feeds each resulting message back
+// into m. Commands those updates return are dropped: the fade timer sleeps for
+// statusTimeout and no test needs it to fire.
+func applyCmd(m Model, cmd tea.Cmd) Model {
+	msgs := []tea.Msg{runCmd(cmd)}
+	if batch, ok := msgs[0].(tea.BatchMsg); ok {
+		msgs = msgs[:0]
+		for _, c := range batch {
+			msgs = append(msgs, runCmd(c))
+		}
+	}
+	for _, msg := range msgs {
+		if msg != nil {
+			next, _ := m.Update(msg)
+			m = next.(Model)
+		}
+	}
+	return m
+}
+
 func sendRoot(t *testing.T, m Model, key string) (Model, tea.Cmd) {
 	t.Helper()
 	next, cmd := m.Update(k(key))
@@ -523,24 +544,26 @@ func TestGenerate_KeyOutsideSSHDirNotListed(t *testing.T) {
 	if len(m.keys) != 0 {
 		t.Fatalf("key outside the SSH dir was listed: %+v", m.keys)
 	}
-	if m.err != nil {
-		t.Fatalf("a successful generation must not be reported as an error: %v", m.err)
+	if m.status.level != statusNotice || !strings.Contains(m.status.text, "/tmp/keys/id_x") {
+		t.Fatalf("expected a notice naming the key's path; got %+v", m.status)
 	}
-	if !strings.Contains(m.notice, "/tmp/keys/id_x") {
-		t.Fatalf("expected a notice naming the key's path; got %q", m.notice)
+	if area := strings.Join(m.messageLines(), "\n"); !strings.Contains(area, "⚠  key saved to /tmp/keys/id_x") {
+		t.Fatalf("message area does not show the notice: %q", area)
 	}
-	if bar := m.statusBar(); !strings.Contains(bar, noticePrefix+"key saved to /tmp/keys/id_x") {
-		t.Fatalf("status bar does not show the notice: %q", bar)
+	if strings.Contains(m.statusBar(), "key saved") {
+		t.Error("the notice must not take the place of the navigation hints")
 	}
-	if after, _ := m.Update(k("j")); after.(Model).notice != "" {
-		t.Error("the notice should be dismissed by the next key press")
+	next, _ = m.Update(clearStatusMsg{token: m.statusToken})
+	if next.(Model).status.text != "" {
+		t.Error("the notice should go when its timer fires")
 	}
-	// A long path must not push the status line past the frame.
+	// A long path wraps inside the frame instead of pushing past it.
 	long := keys.Key{PrivateKeyPath: "/" + strings.Repeat("deep/", 40) + "id_z", Fingerprint: "SHA256:z"}
 	next, _ = m.Update(keyGeneratedMsg{key: long})
-	if bar := next.(Model).statusBar(); lipgloss.Width(strings.Split(bar, "\n")[1]) > m.innerWidth() {
-		t.Fatalf("status line wider than the frame (%d > %d): %q",
-			lipgloss.Width(strings.Split(bar, "\n")[1]), m.innerWidth(), bar)
+	for _, l := range next.(Model).messageLines() {
+		if lipgloss.Width(l) > m.innerWidth() {
+			t.Fatalf("message line wider than the frame (%d > %d): %q", lipgloss.Width(l), m.innerWidth(), l)
+		}
 	}
 
 	inside := keys.Key{PrivateKeyPath: "/home/u/.ssh/id_y", PublicKeyPath: "/home/u/.ssh/id_y.pub", Fingerprint: "SHA256:y"}
@@ -768,8 +791,9 @@ func TestKeys_ImportKeepsListSize(t *testing.T) {
 	}})
 	m = next.(Model)
 
-	if m.keyList.height != baseline {
-		t.Fatalf("list height after import = %d, want %d", m.keyList.height, baseline)
+	// The success message takes its rows (plus the blank one above it) from the list.
+	if want := baseline - m.messageHeight(); m.keyList.height != want || want <= 1 {
+		t.Fatalf("list height after import = %d, want %d", m.keyList.height, want)
 	}
 	if len(m.keyList.items) != 3 {
 		t.Fatalf("imported key not added: %d items", len(m.keyList.items))
@@ -1170,9 +1194,9 @@ func TestConfig_CRLFCommentDoesNotCorruptRender(t *testing.T) {
 	}
 }
 
-// A successful save must clear a saveErr left by an earlier failure, otherwise
-// the "✓ saved" message renders in the error style.
-func TestConfig_SaveClearsPriorError(t *testing.T) {
+// A successful save reports success through the message area, replacing any
+// earlier failure shown there.
+func TestConfig_SaveReportsSuccess(t *testing.T) {
 	cfg, dir := loadConfig(t)
 	m := newConfigModel(cfg, dir)
 	m, _ = m.update(k("a")) // add a host so the config is modified
@@ -1182,14 +1206,12 @@ func TestConfig_SaveClearsPriorError(t *testing.T) {
 		t.Fatal("expected modified config")
 	}
 
-	m.saveErr = os.ErrInvalid // simulate a prior failed save
-	m, _ = m.update(k("s"))
-
-	if m.saveErr != nil {
-		t.Fatalf("saveErr should be cleared after a successful save; got %v", m.saveErr)
-	}
-	if !strings.Contains(m.saveMsg, "saved") {
-		t.Fatalf("saveMsg = %q, want a success message", m.saveMsg)
+	root := Model{active: ScreenConfig, cfg: cfg, sshDir: dir, cfgEditor: m, width: 100, height: 30}
+	root, _ = root.setStatus(statusError, "save failed: earlier problem")
+	_, cmd := m.update(k("s"))
+	root = applyCmd(root, cmd)
+	if root.status.level != statusSuccess || root.status.text != "saved" {
+		t.Fatalf("status after a successful save = %+v, want success \"saved\"", root.status)
 	}
 }
 
@@ -1350,9 +1372,7 @@ func TestConfig_CreatedConfigSurvivesTabSwitch(t *testing.T) {
 	m, _ = m.navigate(navigateMsg{to: ScreenConfig})
 
 	next, cmd := m.Update(k("n"))
-	m = next.(Model)
-	next, _ = m.Update(runCmd(cmd))
-	m = next.(Model)
+	m = applyCmd(next.(Model), cmd)
 
 	m.cfgEditor, _ = m.cfgEditor.update(k("a"))
 	m.cfgEditor, _ = m.cfgEditor.update(k("staging"))
@@ -1456,23 +1476,10 @@ func TestConfig_SaveKeepsStatusAndCursor(t *testing.T) {
 	m.cfgEditor, _ = m.cfgEditor.update(k("enter"))
 
 	next, cmd := m.Update(k("s"))
-	m = next.(Model)
-	reload := runCmd(cmd)
-	if batch, ok := reload.(tea.BatchMsg); ok {
-		for _, c := range batch {
-			if msg, ok := runCmd(c).(keysReloadedMsg); ok {
-				reload = msg
-			}
-		}
-	}
-	if _, ok := reload.(keysReloadedMsg); !ok {
-		t.Fatalf("save did not trigger a rescan; got %T", reload)
-	}
-	next, _ = m.Update(reload)
-	m = next.(Model)
+	m = applyCmd(next.(Model), cmd) // the "saved" message and the rescan
 
-	if !strings.Contains(m.cfgEditor.saveMsg, "saved") {
-		t.Errorf("saveMsg after the rescan = %q, want the saved message", m.cfgEditor.saveMsg)
+	if m.status.text != "saved" {
+		t.Errorf("message after the rescan = %q, want the saved message", m.status.text)
 	}
 	if m.cfgEditor.blockCursor != 1 {
 		t.Errorf("blockCursor after the rescan = %d, want 1 (host b2)", m.cfgEditor.blockCursor)
@@ -1549,6 +1556,136 @@ func TestKeys_ScrollMovesOnlyAtEdges(t *testing.T) {
 	}
 }
 
+// An error stays until the user leaves the tab: key presses on the same screen
+// keep it, so it can be read; a timed message goes when its timer fires.
+func TestStatus_ErrorStaysUntilTabChange(t *testing.T) {
+	m := Model{active: ScreenKeys, keys: keyFixture(), width: 100, height: 30}
+	m.keyList = newKeyListModel(m.keys, nil, "")
+	m = m.propagateSize()
+
+	next, _ := m.Update(errMsg{errors.New("rotation failed")})
+	m = next.(Model)
+	for _, key := range []string{"down", "up", "j"} {
+		next, _ = m.Update(k(key))
+		m = next.(Model)
+	}
+	if m.status.text != "rotation failed" {
+		t.Fatalf("error gone after key presses on the same tab: %+v", m.status)
+	}
+	next, _ = m.Update(clearStatusMsg{token: m.statusToken})
+	if next.(Model).status.text == "" {
+		t.Fatal("an error must not fade on a timer")
+	}
+	m, _ = m.navigate(navigateMsg{to: ScreenAudit})
+	if m.status.text != "" {
+		t.Fatalf("error survived the tab change: %+v", m.status)
+	}
+
+	m, _ = m.setStatus(statusSuccess, "saved")
+	m, _ = m.navigate(navigateMsg{to: ScreenKeys})
+	if m.status.text != "saved" {
+		t.Fatal("a timed message runs out on its own; a tab change must not cut it short")
+	}
+	next, _ = m.Update(clearStatusMsg{token: m.statusToken - 1})
+	if next.(Model).status.text == "" {
+		t.Fatal("a stale timer tick cleared a newer message")
+	}
+	next, _ = m.Update(clearStatusMsg{token: m.statusToken})
+	if next.(Model).status.text != "" {
+		t.Fatal("the success message should go when its timer fires")
+	}
+}
+
+// The message area sits above the hints with a blank row before it, takes its
+// height from the body (the frame keeps its size), and wraps a long message to
+// at most maxStatusLines with an ellipsis.
+func TestStatus_MessageAreaLayout(t *testing.T) {
+	m := Model{active: ScreenKeys, keys: keyFixture(), width: 80, height: 30}
+	m.keyList = newKeyListModel(m.keys, nil, "")
+	m = m.propagateSize()
+	before := lipgloss.Height(m.View())
+	bodyBefore := m.keyList.height
+
+	m, _ = m.setStatus(statusError, strings.Repeat("very long failure text ", 30))
+	view := m.View()
+	if got := lipgloss.Height(view); got != before {
+		t.Fatalf("frame height changed from %d to %d with a message", before, got)
+	}
+	lines := m.messageLines()
+	if len(lines) != maxStatusLines || !strings.HasSuffix(lines[len(lines)-1], "…") {
+		t.Fatalf("long message not capped at %d lines with an ellipsis: %q", maxStatusLines, lines)
+	}
+	if got, want := m.keyList.height, bodyBefore-maxStatusLines-1; got != want {
+		t.Errorf("body height with a %d-line message = %d, want %d", maxStatusLines, got, want)
+	}
+	rows := strings.Split(view, "\n")
+	for i, r := range rows {
+		if strings.Contains(r, "✗  very long") {
+			if strings.Trim(rows[i-1], "│ ") != "" {
+				t.Errorf("no blank row above the message: %q", rows[i-1])
+			}
+			if !strings.Contains(rows[i+maxStatusLines+1], "navigate") {
+				t.Errorf("hints are not right below the message: %q", rows[i+maxStatusLines+1])
+			}
+			return
+		}
+	}
+	t.Fatal("message not found in the view")
+}
+
+// Confirmations live in the message area too, not in the screen body. The
+// question carries no key list: the hints right below show the answer keys.
+func TestStatus_ConfirmationInMessageArea(t *testing.T) {
+	cfg, dir := loadConfig(t)
+	m := Model{active: ScreenConfig, cfg: cfg, sshDir: dir, width: 100, height: 30}
+	m, _ = m.navigate(navigateMsg{to: ScreenConfig})
+	next, _ := m.Update(k("d"))
+	m = next.(Model)
+
+	if area := strings.Join(m.messageLines(), "\n"); !strings.Contains(area, "⚠  delete host *?") || strings.Contains(area, "press") {
+		t.Fatalf("delete prompt in the message area = %q, want just the question", area)
+	}
+	if hints := m.statusBar(); !strings.Contains(hints, "d  confirm delete host") {
+		t.Errorf("hints do not show the answer keys: %q", hints)
+	}
+	if strings.Contains(m.cfgEditor.view(), "delete host?") {
+		t.Error("delete prompt still rendered inside the config screen")
+	}
+	next, _ = m.Update(k("esc"))
+	if next.(Model).messageLines() != nil {
+		t.Error("cancelling the delete should clear the prompt")
+	}
+}
+
+// A joined error (errors.Join puts each part on its own line) reads as one
+// sentence, and both the message and the hints keep a column off the frame.
+func TestStatus_JoinedErrorAndGutter(t *testing.T) {
+	m := Model{active: ScreenKeys, width: 100, height: 30}
+	next, _ := m.Update(errMsg{errors.Join(errors.New("key rotation failed"), errors.New("failed to create key file"))})
+	m = next.(Model)
+	if want := "key rotation failed: failed to create key file"; m.status.text != want {
+		t.Errorf("status text = %q, want %q", m.status.text, want)
+	}
+	if lines := m.messageLines(); len(lines) != 1 || !strings.HasPrefix(lines[0], " ✗  ") {
+		t.Errorf("message area = %q, want one line starting with a gutter column", lines)
+	}
+	if hints := strings.Split(m.statusBar(), "\n")[1]; !strings.HasPrefix(hints, " ") {
+		t.Errorf("hints touch the frame: %q", hints)
+	}
+}
+
+// A later success of the same kind of action replaces the error it left.
+func TestStatus_SuccessReplacesError(t *testing.T) {
+	m := Model{active: ScreenDetail, width: 100, height: 30}
+	next, _ := m.Update(errMsg{errors.New("could not add key to agent")})
+	m = next.(Model)
+	next, _ = m.Update(agentAddedMsg{})
+	m = next.(Model)
+	if m.status.level != statusSuccess || m.status.text != "added to ssh-agent" {
+		t.Fatalf("status after a successful retry = %+v", m.status)
+	}
+}
+
 // ── §9 backup restore bounds ────────────────────────────────────────────────
 
 // §9.5 — out-of-range restore selection reports an error, never crashes.
@@ -1570,8 +1707,8 @@ func TestBackup_RestoreBounds(t *testing.T) {
 		mm := m
 		mm.confirmInput.SetValue(bad)
 		mm, _ = mm.update(k("enter"))
-		if !mm.isError || !strings.Contains(mm.statusMsg, "between 1 and 2") {
-			t.Fatalf("restore %q: isError=%v msg=%q", bad, mm.isError, mm.statusMsg)
+		if !strings.Contains(mm.inputErr, "between 1 and 2") {
+			t.Fatalf("restore %q: inputErr=%q", bad, mm.inputErr)
 		}
 	}
 }
@@ -1589,7 +1726,7 @@ func TestBackup_RestoreRequiresConfirmation(t *testing.T) {
 	m.confirmInput.SetValue("1")
 	m, cmd := m.update(k("enter"))
 
-	// Selecting a backup must NOT immediately restore — it asks to confirm.
+	// Selecting a backup must NOT immediately restore: it asks to confirm.
 	if m.promptStep != stepConfirm {
 		t.Fatalf("expected stepConfirm after selection; got %v", m.promptStep)
 	}
@@ -1611,12 +1748,9 @@ func TestBackup_RestoreRequiresConfirmation(t *testing.T) {
 
 	// "y" without an unlocked identity reports the locked vault instead of
 	// restoring; the screen is only reachable after unlock.
-	confirmed, cmd := m.update(k("y"))
-	if cmd != nil {
-		t.Fatalf("y with a locked vault must not run a command; got %#v", runCmd(cmd))
-	}
-	if !confirmed.isError || confirmed.statusMsg == "" {
-		t.Fatalf("y with a locked vault should report an error; got %q", confirmed.statusMsg)
+	_, cmd = m.update(k("y"))
+	if msg, ok := runCmd(cmd).(statusMsg); !ok || msg.level != statusError {
+		t.Fatalf("y with a locked vault should only report an error; got %#v", runCmd(cmd))
 	}
 }
 
@@ -1786,8 +1920,8 @@ func TestModel_KeysReloadedErrorKeepsList(t *testing.T) {
 	if len(m.keys) != 1 || m.keys[0].PrivateKeyPath != "/ssh/id_ed25519" {
 		t.Fatalf("keys were altered on reload error: %#v", m.keys)
 	}
-	if m.err == nil {
-		t.Fatal("expected m.err to be set on reload error")
+	if m.status.level != statusError || m.status.text == "" {
+		t.Fatalf("expected an error message on reload error; got %+v", m.status)
 	}
 	if m.sshDir != "/ssh" {
 		t.Fatalf("sshDir must not change on reload error; got %q", m.sshDir)
@@ -2137,9 +2271,10 @@ func TestKnownHosts_ForgetRemovesEntryAndKeepsSize(t *testing.T) {
 			t.Fatal("host2.example should have been forgotten")
 		}
 	}
-	if m.knownHosts.height != wantH || m.knownHosts.width == 0 {
+	// The "forgot" message takes its rows (plus the blank one above it) from the list.
+	if want := wantH - m.messageHeight(); m.knownHosts.height != want || m.knownHosts.width == 0 {
 		t.Fatalf("size not retained after forget: w=%d h=%d (want h=%d)",
-			m.knownHosts.width, m.knownHosts.height, wantH)
+			m.knownHosts.width, m.knownHosts.height, want)
 	}
 }
 
@@ -2169,14 +2304,30 @@ func TestKnownHosts_ForgetAfterExternalChangeReloads(t *testing.T) {
 	next, _ := m.Update(runCmd(cmd))
 	m = next.(Model)
 
-	if m.err == nil {
-		t.Fatal("expected an error telling the user the file changed")
+	if m.status.level != statusError || !strings.Contains(m.status.text, "not forgotten") {
+		t.Fatalf("expected an error telling the user the file changed; got %+v", m.status)
 	}
 	if got, _ := os.ReadFile(path); string(got) != rewritten {
 		t.Fatalf("known_hosts modified despite the change:\n%s", got)
 	}
 	if len(m.knownHosts.entries) != 2 {
 		t.Fatalf("entries after reload = %d, want 2", len(m.knownHosts.entries))
+	}
+}
+
+// While a forget waits for its answer, the hints show the keys that answer it:
+// the question itself no longer lists them.
+func TestKnownHosts_ConfirmHints(t *testing.T) {
+	m := knownHostsModel{entries: []knownhosts.Entry{{Hosts: []string{"alpha.example"}, LineNum: 1}}}
+	if strings.Contains(m.hints(), "confirm") {
+		t.Fatalf("idle hints mention a confirmation: %q", m.hints())
+	}
+	m, _ = m.update(k("d"))
+	if got := m.hints(); got != "d  confirm forget  ·  esc  cancel" {
+		t.Errorf("hints during the forget question = %q", got)
+	}
+	if got := m.confirmPrompt(); got != "forget alpha.example?" {
+		t.Errorf("question = %q, want %q", got, "forget alpha.example?")
 	}
 }
 

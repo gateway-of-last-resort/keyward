@@ -72,11 +72,10 @@ type Model struct {
 	// fingerprints currently loaded in the ssh-agent (empty if none/no agent)
 	agentLoaded map[string]bool
 
-	// non-fatal error or notice shown in status bar; errToken guards the
-	// auto-dismiss timer so a stale tick can't clear a newer message early.
-	err      error
-	notice   string
-	errToken int
+	// message shown in the area above the hints; statusToken guards the fade
+	// timer so a stale tick can't clear a newer message early.
+	status      statusMsg
+	statusToken int
 
 	// saver orders background metadata saves; a pointer so every copy of the
 	// value-typed Model shares it.
@@ -140,21 +139,8 @@ type navigateMsg struct {
 	keyIndex int // used when navigating to ScreenDetail
 }
 
-// errMsg delivers a non-fatal error to the status bar.
+// errMsg delivers a non-fatal error to the message area.
 type errMsg struct{ err error }
-
-// clearErrMsg dismisses the status-bar error banner; token must match the
-// current errToken or the tick is stale and ignored.
-type clearErrMsg struct{ token int }
-
-// errBannerTimeout is how long a non-fatal error lingers before auto-dismissing.
-const errBannerTimeout = 4 * time.Second
-
-func clearErrAfter(token int) tea.Cmd {
-	return tea.Tick(errBannerTimeout, func(time.Time) tea.Msg {
-		return clearErrMsg{token: token}
-	})
-}
 
 // keysReloadedMsg carries refreshed keys, config, and audit report after an SSH dir change.
 // sshDir is the directory that was scanned; err is non-nil when the scan failed,
@@ -330,8 +316,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.prevTab()
 			}
 		}
-		m.err = nil
-		m.notice = ""
 
 	case vaultReadyMsg:
 		s := msg.store
@@ -346,15 +330,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.navigate(msg)
 
 	case errMsg:
-		m.err = msg.err
-		m.notice = ""
-		m.errToken++
-		return m, clearErrAfter(m.errToken)
+		return m.setStatus(statusError, msg.err.Error())
 
-	case clearErrMsg:
-		if msg.token == m.errToken {
-			m.err = nil
-			m.notice = ""
+	case statusMsg:
+		return m.setStatus(msg.level, msg.text)
+
+	case clearStatusMsg:
+		if msg.token == m.statusToken && m.status.level != statusError {
+			m = m.clearStatus()
 		}
 		return m, nil
 
@@ -367,50 +350,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentAddedMsg:
 		// Re-query the agent so the "loaded" status reflects the new key.
-		return m, refreshAgentCmd()
+		m, cmd := m.setStatus(statusSuccess, "added to ssh-agent")
+		return m, tea.Batch(cmd, refreshAgentCmd())
 
 	case keyGeneratedMsg:
 		// The form lets the key go to any directory. One outside the SSH dir
 		// would vanish from the list at the next rescan, so say where it went
 		// instead of listing it for now.
 		if filepath.Clean(filepath.Dir(msg.key.PrivateKeyPath)) != filepath.Clean(m.sshDir) {
-			// The status bar has one line; trim the path from the left so the
-			// file name stays visible and the line never widens the frame.
-			const format = "key saved to %s (outside the SSH dir, so not shown in the list)"
-			width := max(m.innerWidth()-lipgloss.Width(noticePrefix+fmt.Sprintf(format, "")), 12)
-			m.notice = fmt.Sprintf(format, fitLeft(msg.key.PrivateKeyPath, width))
-			m.errToken++
-			return m, tea.Batch(clearErrAfter(m.errToken), navigate(ScreenKeys))
+			m, cmd := m.setStatus(statusNotice, fmt.Sprintf(
+				"key saved to %s (outside the SSH dir, so not shown in the list)", msg.key.PrivateKeyPath))
+			return m, tea.Batch(cmd, navigate(ScreenKeys))
 		}
 		m.keys = append(m.keys, msg.key)
 		m.report = audit.Run(m.keys, m.cfg, m.sshDir)
 		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
+		m, statusCmd := m.setStatus(statusSuccess, "generated "+msg.key.PrivateKeyPath)
 		if m.store != nil && msg.key.Fingerprint != "" {
 			_ = storage.Put(m.store, storage.KeyMetadata{
 				Fingerprint: msg.key.Fingerprint,
 				Tags:        []string{},
 				LinkedHosts: []string{},
 			})
-			return m, tea.Batch(m.saveStore(), navigate(ScreenKeys))
+			return m, tea.Batch(statusCmd, m.saveStore(), navigate(ScreenKeys))
 		}
-		return m, navigate(ScreenKeys)
+		return m, tea.Batch(statusCmd, navigate(ScreenKeys))
 
 	case keyImportedMsg:
 		m.keys = append(m.keys, msg.key)
 		m.report = audit.Run(m.keys, m.cfg, m.sshDir)
 		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
-		// Rebuilding the list drops its width/height; push them back so the
-		// viewport doesn't collapse to a single row.
-		m = m.propagateSize()
+		// Rebuilding the list drops its width/height; setStatus pushes them back
+		// so the viewport doesn't collapse to a single row.
+		m, cmd := m.setStatus(statusSuccess, "imported "+msg.key.PrivateKeyPath)
 		if m.store != nil && msg.key.Fingerprint != "" {
 			_ = storage.Put(m.store, storage.KeyMetadata{
 				Fingerprint: msg.key.Fingerprint,
 				Tags:        []string{},
 				LinkedHosts: []string{},
 			})
-			return m, m.saveStore()
+			return m, tea.Batch(cmd, m.saveStore())
 		}
-		return m, nil
+		return m, cmd
 
 	case keyRotatedMsg:
 		for i, k := range m.keys {
@@ -439,7 +420,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.report = audit.Run(m.keys, m.cfg, m.sshDir)
 		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
-		var rotCmds []tea.Cmd
+		m, statusCmd := m.setStatus(statusSuccess, "key rotated")
+		rotCmds := []tea.Cmd{statusCmd}
 		if m.store != nil {
 			rotCmds = append(rotCmds, m.saveStore())
 		}
@@ -493,7 +475,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.report = audit.Run(m.keys, m.cfg, m.sshDir)
 		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
-		var delCmds []tea.Cmd
+		m, statusCmd := m.setStatus(statusSuccess, "key deleted")
+		delCmds := []tea.Cmd{statusCmd}
 		if m.store != nil {
 			delCmds = append(delCmds, m.saveStore())
 		}
@@ -513,10 +496,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			// Scan failed: keep current keys/config/report and surface the
 			// error instead of wiping the list; the bad dir is not persisted.
-			m.err = fmt.Errorf("cannot use %s: %w", msg.sshDir, msg.err)
-			return m, nil
+			return m.setStatus(statusError, fmt.Sprintf("cannot use %s: %v", msg.sshDir, msg.err))
 		}
-		m.err = nil
+		m = m.clearError()
 		sameDir := msg.sshDir == m.sshDir
 		m.sshDir = msg.sshDir
 		m.settingsView.sshDir = msg.sshDir
@@ -546,8 +528,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		path := m.knownHosts.path
 		entries, err := knownhosts.Parse(path)
 		if err != nil {
-			m.err = err
-			return m, nil
+			return m.setStatus(statusError, err.Error())
 		}
 		m.knownHosts = newKnownHostsModel(entries, m.sshDir, path)
 		if cursor >= len(entries) {
@@ -557,18 +538,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cursor = 0
 		}
 		m.knownHosts.cursor, m.knownHosts.offset = cursor, offset
-		m = m.propagateSize()
-		m.knownHosts = m.knownHosts.syncScroll()
+		m = m.propagateSize().syncScroll()
 		if msg.err != nil {
-			m.err = fmt.Errorf("%s not forgotten: %w; the list was reloaded", msg.host, msg.err)
-			m.errToken++
-			return m, clearErrAfter(m.errToken)
+			return m.setStatus(statusError, fmt.Sprintf("%s not forgotten: %v; the list was reloaded", msg.host, msg.err))
 		}
-		return m, nil
+		return m.setStatus(statusSuccess, "forgot "+msg.host)
 
 	case backupResultMsg:
 		m.backupView, _ = m.backupView.update(msg)
-		if msg.err == nil && msg.restored {
+		if msg.err != nil {
+			return m.setStatus(statusError, msg.err.Error())
+		}
+		m, statusCmd := m.setStatus(statusSuccess, msg.msg)
+		if msg.restored {
 			// Restore overwrote metadata.age on disk. Reload the in-memory store
 			// from it, otherwise the restored tags/notes stay invisible until a
 			// restart and the next metadata Save clobbers the just-restored file
@@ -578,9 +560,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.store = &s
 				}
 			}
-			return m, m.reloadKeys()
+			return m, tea.Batch(statusCmd, m.reloadKeys())
 		}
-		return m, nil
+		return m, statusCmd
 	}
 
 	return m.updateActive(msg)
@@ -593,25 +575,41 @@ var frameStyle = lipgloss.NewStyle().
 // View satisfies tea.Model.
 func (m Model) View() string {
 	title := m.titleBar()
-	body := m.viewActive()
 	status := m.statusBar()
+	message := m.messageLines()
 
-	// border takes 1 line top + 1 line bottom; pin status bar to the bottom
-	used := lipgloss.Height(title) + lipgloss.Height(status)
-	avail := m.height - used - 2
-	bodyLines := lipgloss.Height(body)
-	if bodyLines < avail {
-		body += strings.Repeat("\n", avail-bodyLines)
+	// The frame is one row shorter than the terminal; its border takes a row
+	// above and below. The body fills what is left so the hints stay pinned to
+	// the bottom, minus the message area (a blank row, then the message) when
+	// there is something to say.
+	rows := m.height - 3 - lipgloss.Height(title) - lipgloss.Height(status)
+	if len(message) > 0 {
+		rows -= len(message) + 1
 	}
-
-	content := title + "\n" + body + status
-	return frameStyle.Render(content)
+	lines := strings.Split(title, "\n")
+	body := strings.Split(strings.TrimRight(m.viewActive(), "\n"), "\n")
+	lines = append(lines, body...)
+	for i := len(body); i < rows; i++ {
+		lines = append(lines, "")
+	}
+	if len(message) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, message...)
+	}
+	lines = append(lines, strings.Split(status, "\n")...)
+	return frameStyle.Render(strings.Join(lines, "\n"))
 }
 
 // --- navigation ---
 
 func (m Model) navigate(msg navigateMsg) (Model, tea.Cmd) {
+	// An error belongs to the screen it happened on and stays until the user
+	// leaves it; timed messages run out on their own, even across a switch.
+	if msg.to != m.active {
+		m = m.clearError()
+	}
 	m.active = msg.to
+	var parseErr error
 	switch msg.to {
 	case ScreenDetail:
 		if msg.keyIndex >= 0 && msg.keyIndex < len(m.keys) {
@@ -626,9 +624,7 @@ func (m Model) navigate(msg navigateMsg) (Model, tea.Cmd) {
 	case ScreenKnownHosts:
 		path := filepath.Join(m.sshDir, "known_hosts")
 		entries, err := knownhosts.Parse(path)
-		if err != nil {
-			m.err = err
-		}
+		parseErr = err
 		m.knownHosts = newKnownHostsModel(entries, m.sshDir, path)
 	case ScreenBackup:
 		m.backupView = newBackupModel(m.sshDir, m.vaultDir, m.identity)
@@ -636,6 +632,9 @@ func (m Model) navigate(msg navigateMsg) (Model, tea.Cmd) {
 		m.settingsView = newSettingsModel(m.masterKeyPath, m.sshDir, m.vaultDir)
 	}
 	m = m.propagateSize()
+	if parseErr != nil {
+		return m.setStatus(statusError, parseErr.Error())
+	}
 	return m, nil
 }
 
@@ -650,17 +649,14 @@ func (m Model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.unlockView, cmd = m.unlockView.update(msg)
 	case ScreenKeys:
 		m.keyList, cmd = m.keyList.update(msg)
-		m.keyList = m.keyList.syncScroll()
 	case ScreenDetail:
 		m.keyDetail, cmd = m.keyDetail.update(msg)
 	case ScreenAudit:
 		m.auditView, cmd = m.auditView.update(msg)
-		m.auditView = m.auditView.syncScroll()
 	case ScreenGenerate:
 		m.genForm, cmd = m.genForm.update(msg)
 	case ScreenConfig:
 		m.cfgEditor, cmd = m.cfgEditor.update(msg)
-		m.cfgEditor = m.cfgEditor.syncScroll()
 		if m.cfgEditor.saved {
 			m.cfgEditor.saved = false
 			// The config on disk just changed; re-scan and re-run the audit so the
@@ -670,13 +666,24 @@ func (m Model) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case ScreenKnownHosts:
 		m.knownHosts, cmd = m.knownHosts.update(msg)
-		m.knownHosts = m.knownHosts.syncScroll()
 	case ScreenBackup:
 		m.backupView, cmd = m.backupView.update(msg)
 	case ScreenSettings:
 		m.settingsView, cmd = m.settingsView.update(msg)
 	}
-	return m, cmd
+	// A confirmation opening or closing resizes the message area, so the screens
+	// get their new height before the lists re-check their scroll windows.
+	return m.propagateSize().syncScroll(), cmd
+}
+
+// syncScroll keeps every scrollable list's window around its cursor after a
+// change in cursor position or available height.
+func (m Model) syncScroll() Model {
+	m.keyList = m.keyList.syncScroll()
+	m.auditView = m.auditView.syncScroll()
+	m.cfgEditor = m.cfgEditor.syncScroll()
+	m.knownHosts = m.knownHosts.syncScroll()
+	return m
 }
 
 func (m Model) viewActive() string {
@@ -724,8 +731,9 @@ func (m Model) innerWidth() int {
 
 func (m Model) propagateSize() Model {
 	w := m.innerWidth()
-	// chrome: border(2) + app line + blank + tab bar + top sep + bottom sep + status hint = 8 lines
-	avail := m.height - 8
+	// chrome: border(2) + app line + blank + tab bar + top sep + bottom sep + status hint = 8 lines,
+	// plus the message area while it is shown
+	avail := m.height - 8 - m.messageHeight()
 	if avail < 1 {
 		avail = 1
 	}
@@ -814,28 +822,29 @@ var (
 func (m Model) statusBar() string {
 	w := m.innerWidth()
 	sep := statusSepStyle.Render(strings.Repeat("─", w))
-	if m.err != nil {
-		return sep + "\n" + errorBarStyle.Render("✗  "+m.err.Error())
-	}
-	if m.notice != "" {
-		return sep + "\n" + warnMsgStyle.Render(noticePrefix+m.notice)
-	}
+	hints := screenHint(m.active)
 	switch m.active {
 	case ScreenDetail:
-		return sep + "\n" + statusBarStyle.Render(m.keyDetail.hints())
+		hints = m.keyDetail.hints()
 	case ScreenConfig:
-		return sep + "\n" + statusBarStyle.Render(m.cfgEditor.hints())
+		hints = m.cfgEditor.hints()
 	case ScreenBackup:
-		return sep + "\n" + statusBarStyle.Render(m.backupView.hints())
+		hints = m.backupView.hints()
 	case ScreenSettings:
-		return sep + "\n" + statusBarStyle.Render(m.settingsView.hints())
+		hints = m.settingsView.hints()
+	case ScreenKnownHosts:
+		hints = m.knownHosts.hints()
 	}
-	return sep + "\n" + statusBarStyle.Render(screenHint(m.active))
+	// While a question waits in the message area, its answer keys are these
+	// hints: show them in the question's yellow so the two read together.
+	style := statusBarStyle
+	if m.prompt() != "" {
+		style = warnMsgStyle
+	}
+	// One column of gutter so the hints don't touch the frame; cut rather than
+	// let a long hint line push the frame wider than the window.
+	return sep + "\n" + style.Render(fitRight(" "+hints, w))
 }
-
-// noticePrefix marks a status-bar notice: something the user should know that
-// is not a failure, shown in the same yellow as the screens' own notices.
-const noticePrefix = "⚠  "
 
 func screenHint(s Screen) string {
 	nav := "tab / shift+tab  switch screens"

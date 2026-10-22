@@ -10,7 +10,6 @@ import (
 	"filippo.io/age"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/gateway-of-last-resort/keyward/internal/storage"
 )
@@ -25,10 +24,7 @@ type backupModel struct {
 
 	confirmInput textinput.Model
 	promptStep   backupStep
-
-	// result
-	statusMsg string
-	isError   bool
+	inputErr     string // validation error for the restore-number input
 
 	backups       []string // list of existing backup files
 	cursor        int      // selected backup index
@@ -41,10 +37,8 @@ type backupStep int
 const (
 	stepIdle    backupStep = iota // showing menu
 	stepConfirm                   // prompting for restore confirmation
-	stepRestore                   // prompting which backup to restore (cursor)
+	stepRestore                   // prompting which backup to restore (number)
 )
-
-var backupMsgStyle = lipgloss.NewStyle().Foreground(colGreen)
 
 func (m backupModel) hints() string {
 	nav := "tab / shift+tab  switch screens"
@@ -84,7 +78,7 @@ func (m backupModel) update(msg tea.Msg) (backupModel, tea.Cmd) {
 	case backupResultMsg:
 		return m.handleResult(msg), nil
 	case tea.KeyMsg:
-		m.statusMsg = ""
+		m.inputErr = ""
 		switch m.promptStep {
 		case stepIdle:
 			return m.updateIdle(msg)
@@ -111,16 +105,12 @@ func (m backupModel) updateIdle(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 		}
 	case "b":
 		if m.identity == nil {
-			m.statusMsg = errVaultLocked.Error()
-			m.isError = true
-			return m, nil
+			return m, showStatus(statusError, errVaultLocked.Error())
 		}
 		return m, m.runBackupDirect("")
 	case "r":
 		if len(m.backups) == 0 {
-			m.statusMsg = "no backups found in " + filepath.Join(m.vaultDir, "backups")
-			m.isError = true
-			return m, nil
+			return m, showStatus(statusNotice, "no backups found in "+filepath.Join(m.vaultDir, "backups"))
 		}
 		m.promptStep = stepRestore
 		m.confirmInput.SetValue("")
@@ -132,16 +122,13 @@ func (m backupModel) updateIdle(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 			} else {
 				m.confirmDelete = false
 				if err := os.Remove(m.backups[m.cursor]); err != nil {
-					m.statusMsg = "delete failed: " + err.Error()
-					m.isError = true
-				} else {
-					m.backups = listBackups(m.vaultDir)
-					if m.cursor >= len(m.backups) && m.cursor > 0 {
-						m.cursor--
-					}
-					m.statusMsg = "backup deleted"
-					m.isError = false
+					return m, showStatus(statusError, "delete failed: "+err.Error())
 				}
+				m.backups = listBackups(m.vaultDir)
+				if m.cursor >= len(m.backups) && m.cursor > 0 {
+					m.cursor--
+				}
+				return m, showStatus(statusSuccess, "backup deleted")
 			}
 		}
 	case "esc":
@@ -167,8 +154,7 @@ func (m backupModel) updateRestore(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 		}
 		var idx int
 		if _, err := fmt.Sscanf(choice, "%d", &idx); err != nil || idx < 1 || idx > len(m.backups) {
-			m.statusMsg = fmt.Sprintf("enter a number between 1 and %d", len(m.backups))
-			m.isError = true
+			m.inputErr = fmt.Sprintf("enter a number between 1 and %d", len(m.backups))
 			return m, nil
 		}
 		// Restore overwrites files in ~/.ssh irreversibly, so require an
@@ -189,9 +175,7 @@ func (m backupModel) updateConfirm(msg tea.KeyMsg) (backupModel, tea.Cmd) {
 	case "y", "Y":
 		m.promptStep = stepIdle
 		if m.identity == nil {
-			m.statusMsg = errVaultLocked.Error()
-			m.isError = true
-			return m, nil
+			return m, showStatus(statusError, errVaultLocked.Error())
 		}
 		return m, m.runBackupDirect(m.restoreTarget)
 	default:
@@ -242,14 +226,11 @@ type backupResultMsg struct {
 
 // Wire backupResultMsg into the model's Update.
 // This is handled inside backupModel.update via an extra type switch.
+// handleResult returns the screen to its menu after a backup or restore; the
+// root model shows the outcome in the message area.
 func (m backupModel) handleResult(r backupResultMsg) backupModel {
 	m.promptStep = stepIdle
-	if r.err != nil {
-		m.statusMsg = r.err.Error()
-		m.isError = true
-	} else {
-		m.statusMsg = r.msg
-		m.isError = false
+	if r.err == nil {
 		m.backups = listBackups(m.vaultDir)
 	}
 	return m
@@ -276,30 +257,27 @@ func (m backupModel) view() string {
 		sb.WriteString(dimStyle.Render("  no backups found") + "\n\n")
 	}
 
-	switch m.promptStep {
-	case stepIdle:
-		if m.confirmDelete {
-			sb.WriteString(warnMsgStyle.Render("  delete backup? press d again to confirm · esc to cancel"))
-			sb.WriteString("\n")
-		}
-	case stepConfirm:
-		sb.WriteString(warnMsgStyle.Render(fmt.Sprintf(
-			"  restore overwrites files in %s — this cannot be undone.", m.sshDir)) + "\n")
-		sb.WriteString(warnMsgStyle.Render(fmt.Sprintf(
-			"  restore from %s? press y to confirm · n / esc to cancel", filepath.Base(m.restoreTarget))) + "\n")
-	case stepRestore:
+	if m.promptStep == stepRestore {
 		sb.WriteString(labelStyle.Render("Restore #") + "  " + m.confirmInput.View() + "\n")
-	}
-
-	if m.statusMsg != "" {
-		style := backupMsgStyle
-		if m.isError {
-			style = formErrorStyle
+		if m.inputErr != "" {
+			sb.WriteString("\n  " + formErrorStyle.Render("✗  "+m.inputErr) + "\n")
 		}
-		sb.WriteString("\n  " + style.Render(m.statusMsg) + "\n")
 	}
 
 	return sb.String()
+}
+
+// confirmPrompt is the pending delete or restore question, shown in the message
+// area; the keys that answer it are in the hints right below.
+func (m backupModel) confirmPrompt() string {
+	switch {
+	case m.promptStep == stepConfirm:
+		return fmt.Sprintf("restore from %s? This overwrites files in %s and cannot be undone.",
+			filepath.Base(m.restoreTarget), m.sshDir)
+	case m.promptStep == stepIdle && m.confirmDelete:
+		return "delete backup " + filepath.Base(m.backups[m.cursor]) + "?"
+	}
+	return ""
 }
 
 // listBackups returns .tar.age files in vaultDir/backups, newest first.

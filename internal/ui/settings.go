@@ -42,9 +42,7 @@ type settingsModel struct {
 	sshDirInput   textinput.Model
 	editingSSHDir bool
 
-	statusMsg string
-	isError   bool
-	formErr   error
+	formErr error
 }
 
 // settingsPasswordChangedMsg is emitted on successful password change.
@@ -52,8 +50,6 @@ type settingsPasswordChangedMsg struct{}
 
 // settingsSSHDirChangedMsg is emitted when the user saves a new SSH dir path.
 type settingsSSHDirChangedMsg struct{ sshDir string }
-
-var settingsOKStyle = lipgloss.NewStyle().Foreground(colGreen)
 
 func (m settingsModel) hints() string {
 	nav := "tab / shift+tab  switch screens"
@@ -122,10 +118,8 @@ func (m settingsModel) update(msg tea.Msg) (settingsModel, tea.Cmd) {
 
 	case settingsPasswordChangedMsg:
 		m.step = settingsMenu
-		m.statusMsg = "master password changed"
-		m.isError = false
 		m = m.clearPassInputs()
-		return m, nil
+		return m, showStatus(statusSuccess, "master password changed")
 
 	case tea.KeyMsg:
 		m.formErr = nil
@@ -156,7 +150,6 @@ func (m settingsModel) updateMenu(msg tea.KeyMsg) (settingsModel, tea.Cmd) {
 			m.cursor++
 		}
 	case "enter":
-		m.statusMsg = ""
 		switch m.cursor {
 		case 0:
 			m.step = settingsChangePass
@@ -359,16 +352,6 @@ func (m settingsModel) view() string {
 		sb.WriteString(m.viewMenu())
 	case settingsChangePass:
 		sb.WriteString(m.viewChangePass())
-	}
-
-	if m.statusMsg != "" && m.step == settingsMenu && !m.editingSSHDir {
-		style := settingsOKStyle
-		if m.isError {
-			style = formErrorStyle
-		}
-		sb.WriteString("\n  ")
-		sb.WriteString(style.Render(m.statusMsg))
-		sb.WriteString("\n")
 	}
 
 	return sb.String()

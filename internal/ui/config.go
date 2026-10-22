@@ -51,9 +51,7 @@ type configModel struct {
 	confirmDeleteBlock bool
 	confirmDeleteParam bool
 
-	saved   bool
-	saveErr error
-	saveMsg string
+	saved bool
 }
 
 func newConfigModel(cfg *config.Config, sshDir string) configModel {
@@ -152,6 +150,8 @@ func (m configModel) isBusy() bool {
 func (m configModel) hints() string {
 	nav := "tab/shift+tab  switch screens"
 	switch {
+	case m.cfg == nil:
+		return "n  create config  ·  esc  back  ·  " + nav
 	case m.addingBlock, m.renamingBlock, m.editing:
 		return "enter  confirm  ·  esc  cancel"
 	case m.addingParam:
@@ -198,7 +198,6 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 		if m.addingParam {
 			return m.updateAddParam(msg)
 		}
-		m.saveMsg = ""
 		switch msg.String() {
 		case "esc":
 			if m.confirmDeleteBlock || m.confirmDeleteParam {
@@ -315,16 +314,14 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 				err := config.Save(m.cfg)
 				switch {
 				case errors.Is(err, config.ErrPruneFailed):
-					m.saveErr = nil
-					m.saveMsg = "✓  saved (warning: old backups not pruned)"
 					m.saved = true
+					cause := strings.TrimPrefix(err.Error(), config.ErrPruneFailed.Error()+": ")
+					return m, showStatus(statusNotice, "saved, but old config backups could not be removed: "+cause)
 				case err != nil:
-					m.saveErr = err
-					m.saveMsg = "✗  save failed: " + err.Error()
+					return m, showStatus(statusError, "save failed: "+err.Error())
 				default:
-					m.saveErr = nil
-					m.saveMsg = "✓  saved"
 					m.saved = true
+					return m, showStatus(statusSuccess, "saved")
 				}
 			}
 		}
@@ -471,26 +468,21 @@ func (m configModel) updateAddParam(msg tea.KeyMsg) (configModel, tea.Cmd) {
 func (m configModel) createConfig() (configModel, tea.Cmd) {
 	cfgPath := filepath.Join(m.sshDir, "config")
 	if err := os.MkdirAll(m.sshDir, 0700); err != nil {
-		m.saveMsg = "✗  " + err.Error()
-		m.saveErr = err
-		return m, nil
+		return m, showStatus(statusError, "cannot create the config: "+err.Error())
 	}
 	if err := config.WriteAtomic(cfgPath, []byte("")); err != nil {
-		m.saveMsg = "✗  " + err.Error()
-		m.saveErr = err
-		return m, nil
+		return m, showStatus(statusError, "cannot create the config: "+err.Error())
 	}
 	c, err := config.ParseFile(cfgPath)
 	if err != nil {
-		m.saveMsg = "✗  " + err.Error()
-		m.saveErr = err
-		return m, nil
+		return m, showStatus(statusError, "cannot read the new config: "+err.Error())
 	}
 	m.cfg = &c
-	m.saveErr = nil
-	m.saveMsg = "✓  created " + cfgPath
 	created := m.cfg
-	return m, func() tea.Msg { return configCreatedMsg{cfg: created} }
+	return m, tea.Batch(
+		func() tea.Msg { return configCreatedMsg{cfg: created} },
+		showStatus(statusSuccess, "created "+cfgPath),
+	)
 }
 
 // configCreatedMsg hands a config created from the editor to the root model.
@@ -616,9 +608,6 @@ func (m configModel) view() string {
 		sb.WriteString(sectionHeaderStyle.Width(m.width).Render("SSH Config Editor") + "\n\n")
 		sb.WriteString(dimStyle.Render("  No SSH config found at "+cfgPath) + "\n\n")
 		sb.WriteString(dimStyle.Render("  n  create empty config file"))
-		if m.saveMsg != "" {
-			sb.WriteString("\n\n" + formErrorStyle.Render("  "+m.saveMsg))
-		}
 		return sb.String()
 	}
 
@@ -657,20 +646,19 @@ func (m configModel) view() string {
 		sb.WriteString(l + sep + r + "\n")
 	}
 
+	return sb.String()
+}
+
+// confirmPrompt is the pending delete question, shown in the message area; the
+// keys that answer it are in the hints right below.
+func (m configModel) confirmPrompt() string {
 	switch {
 	case m.confirmDeleteBlock:
-		sb.WriteString("\n" + warnMsgStyle.Render("  delete host? press d again to confirm · esc to cancel") + "\n")
+		return "delete host " + safeDisplay(m.cfg.Blocks[m.blockCursor].Pattern) + "?"
 	case m.confirmDeleteParam:
-		sb.WriteString("\n" + warnMsgStyle.Render("  delete param? press d again to confirm · esc to cancel") + "\n")
-	case m.saveMsg != "":
-		if m.saveErr != nil {
-			sb.WriteString("\n" + formErrorStyle.Render("  "+m.saveMsg) + "\n")
-		} else {
-			sb.WriteString("\n" + savedStyle.Render("  "+m.saveMsg) + "\n")
-		}
+		return "delete this parameter?"
 	}
-
-	return sb.String()
+	return ""
 }
 
 // paneWidths returns the widths of the Hosts and Parameters panes.
@@ -781,7 +769,7 @@ func (m configModel) renderBlocks(width int) string {
 		}
 	}
 	if len(m.cfg.Blocks) == 0 && !m.addingBlock {
-		sb.WriteString(dimStyle.Render(" (no hosts — press a to add)") + "\n")
+		sb.WriteString(dimStyle.Render(" (no hosts: press a to add)") + "\n")
 	}
 
 	if m.addingBlock {
@@ -863,7 +851,7 @@ func (m configModel) renderParams(width int) string {
 	}
 
 	if len(tokens) == 0 && !m.addingParam {
-		sb.WriteString(dimStyle.Render(" (no params — press a to add)") + "\n")
+		sb.WriteString(dimStyle.Render(" (no params: press a to add)") + "\n")
 	}
 
 	if m.addingParam {

@@ -95,6 +95,24 @@ func (m knownHostsModel) syncScroll() knownHostsModel {
 	return m
 }
 
+// hints returns the status-bar key hints, switching to the answer keys while a
+// forget is pending.
+func (m knownHostsModel) hints() string {
+	if m.confirmForget {
+		return "d  confirm forget  ·  esc  cancel"
+	}
+	return screenHint(ScreenKnownHosts)
+}
+
+// confirmPrompt is the pending forget question, shown in the message area; the
+// keys that answer it are in the hints right below.
+func (m knownHostsModel) confirmPrompt() string {
+	if !m.confirmForget || m.cursor >= len(m.entries) {
+		return ""
+	}
+	return fmt.Sprintf("forget %s?", khHostLabel(m.entries[m.cursor]))
+}
+
 // khHostLabel returns a short display label for an entry's host field.
 func khHostLabel(e knownhosts.Entry) string {
 	if e.Hashed {
@@ -146,13 +164,6 @@ func (m knownHostsModel) view() string {
 	if len(m.entries) > maxRows {
 		fmt.Fprintf(&sb, "%s\n", dimStyle.Render(fmt.Sprintf(
 			"  %d–%d of %d", start+1, end, len(m.entries),
-		)))
-	}
-
-	if m.confirmForget {
-		e := m.entries[m.cursor]
-		sb.WriteString("\n" + warnMsgStyle.Render(fmt.Sprintf(
-			"forget %s? press d again to confirm · esc to cancel", khHostLabel(e),
 		)))
 	}
 
