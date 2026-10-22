@@ -475,8 +475,14 @@ func (m configModel) createConfig() (configModel, tea.Cmd) {
 	m.cfg = &c
 	m.saveErr = nil
 	m.saveMsg = "✓  created " + cfgPath
-	return m, nil
+	created := m.cfg
+	return m, func() tea.Msg { return configCreatedMsg{cfg: created} }
 }
+
+// configCreatedMsg hands a config created from the editor to the root model.
+// The editor is rebuilt from the root's cfg on every visit, so without it the
+// new config and any unsaved edits vanished on the next tab switch.
+type configCreatedMsg struct{ cfg *config.Config }
 
 // ── navigation helpers ────────────────────────────────────────────────────────
 

@@ -483,6 +483,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		delCmds = append(delCmds, navigate(ScreenKeys))
 		return m, tea.Batch(delCmds...)
 
+	case configCreatedMsg:
+		m.cfg = msg.cfg
+		return m, nil
+
 	case settingsSSHDirChangedMsg:
 		// Don't commit the new dir or persist prefs yet — wait for a
 		// successful scan so a bad path can't blank the key list.

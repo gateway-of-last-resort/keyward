@@ -1269,6 +1269,33 @@ func TestConfig_CreateEmptyWhenMissing(t *testing.T) { // §8.16
 	}
 }
 
+// A config created with 'n' must survive switching tabs: the editor is rebuilt
+// from the root model's cfg on every visit, and the root used to keep nil.
+func TestConfig_CreatedConfigSurvivesTabSwitch(t *testing.T) {
+	dir := t.TempDir()
+	m := Model{active: ScreenConfig, sshDir: dir, width: 100, height: 30}
+	m, _ = m.navigate(navigateMsg{to: ScreenConfig})
+
+	next, cmd := m.Update(k("n"))
+	m = next.(Model)
+	next, _ = m.Update(runCmd(cmd))
+	m = next.(Model)
+
+	m.cfgEditor, _ = m.cfgEditor.update(k("a"))
+	m.cfgEditor, _ = m.cfgEditor.update(k("staging"))
+	m.cfgEditor, _ = m.cfgEditor.update(k("enter"))
+
+	m, _ = m.navigate(navigateMsg{to: ScreenKeys})
+	m, _ = m.navigate(navigateMsg{to: ScreenConfig})
+
+	if m.cfgEditor.cfg == nil {
+		t.Fatal("editor lost the created config after a tab switch")
+	}
+	if len(m.cfgEditor.cfg.Blocks) != 1 || m.cfgEditor.cfg.Blocks[0].Pattern != "staging" {
+		t.Fatalf("unsaved block lost after a tab switch: %+v", m.cfgEditor.cfg.Blocks)
+	}
+}
+
 // ── §9 backup restore bounds ────────────────────────────────────────────────
 
 // §9.5 — out-of-range restore selection reports an error, never crashes.
