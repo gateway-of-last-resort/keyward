@@ -172,3 +172,54 @@ func TestList_KeysWithoutUsablePrivateFile(t *testing.T) {
 		}
 	}
 }
+
+// A key comment is free text from a .pub file. Printed raw, an ESC sequence in it
+// would drive the terminal (OSC 52 rewrites the clipboard), so list must strip it.
+func TestList_StripsControlCharsFromComment(t *testing.T) {
+	home := t.TempDir()
+	orig := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = orig })
+
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	k, err := keys.GenerateKeys(t.TempDir(), keys.GenerateOptions{
+		Algorithm: keys.AlgorithmEd25519, Filename: "id_x", AllowEmptyPassphrase: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := os.ReadFile(k.PublicKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostile := strings.TrimSpace(string(pub)) + " evil\x1b]52;c;cm0gLXJmIH4=\x07\u009b2J\n"
+	if err := os.WriteFile(filepath.Join(sshDir, "id_x.pub"), []byte(hostile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stdout, _ := run(t, "list")
+	if strings.IndexByte(stdout, 0x1b) >= 0 || strings.IndexByte(stdout, 0x07) >= 0 || strings.IndexByte(stdout, 0x9b) >= 0 {
+		t.Fatalf("list printed control characters: %q", stdout)
+	}
+	if !strings.Contains(stdout, "evil]52;c;cm0gLXJmIH4=2J") {
+		t.Errorf("printable part of the comment should survive: %q", stdout)
+	}
+}
+
+func TestDisplaySafe(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"plain comment", "plain comment"},
+		{"tab\there", "tab here"},
+		{"esc\x1b[31mred", "esc[31mred"},
+		{"bel\x07 del\x7f c1\u009b", "bel del c1"},
+		{"ünïcode ok", "ünïcode ok"},
+	}
+	for _, tt := range tests {
+		if got := displaySafe(tt.in); got != tt.want {
+			t.Errorf("displaySafe(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

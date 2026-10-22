@@ -83,6 +83,6 @@ func writeKeysText(w io.Writer, infos []keyInfo) {
 			lock = "unparsed"
 		}
 		fmt.Fprintf(w, "%-40s %-12s %5d  %-11s %s\n",
-			k.Path, k.Algorithm, k.BitSize, lock, k.Comment)
+			displaySafe(k.Path), k.Algorithm, k.BitSize, lock, displaySafe(k.Comment))
 	}
 }

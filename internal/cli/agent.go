@@ -117,7 +117,7 @@ func cmdAgentAdd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "added %s to ssh-agent\n", path)
+	fmt.Fprintf(stdout, "added %s to ssh-agent\n", displaySafe(path))
 	return 0
 }
 
@@ -144,7 +144,7 @@ func cmdAgentList(args []string, stdout, stderr io.Writer) int {
 		if loaded[k.Fingerprint] {
 			mark = "✓ "
 		}
-		fmt.Fprintf(stdout, "%s%-40s %s\n", mark, k.IdentityPath(), k.Fingerprint)
+		fmt.Fprintf(stdout, "%s%-40s %s\n", mark, displaySafe(k.IdentityPath()), k.Fingerprint)
 	}
 	return 0
 }
