@@ -60,3 +60,61 @@ func TestSave_WritesThroughSymlink(t *testing.T) {
 		t.Errorf("temp files left next to the link: %v", leftovers)
 	}
 }
+
+// Edits that leave something other than the file's final empty token last (a
+// block added to the end, the last block removed or moved) must not strip the
+// trailing newline; a file that had none keeps having none.
+func TestSerialize_TrailingNewlineAfterEdits(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		edit func(c *config.Config)
+		want string
+	}{
+		{
+			name: "add block",
+			in:   "Host a\n    User x\n",
+			edit: func(c *config.Config) { config.AddBlock(c, "b") },
+			want: "Host a\n    User x\n\nHost b\n",
+		},
+		{
+			name: "add block to empty file",
+			in:   "",
+			edit: func(c *config.Config) { config.AddBlock(c, "b") },
+			want: "Host b\n",
+		},
+		{
+			name: "move last block up",
+			in:   "Host a\n    User x\nHost b\n    User y\n",
+			edit: func(c *config.Config) { config.MoveBlock(c, 1, 0) },
+			want: "Host b\n    User y\n\nHost a\n    User x\n",
+		},
+		{
+			name: "remove last block",
+			in:   "Host a\n    User x\nHost b\n    User y\n",
+			edit: func(c *config.Config) { config.RemoveBlock(c, 1) },
+			want: "Host a\n    User x\n",
+		},
+		{
+			name: "crlf file",
+			in:   "Host a\r\n    User x\r\n",
+			edit: func(c *config.Config) { config.AddBlock(c, "b") },
+			want: "Host a\r\n    User x\r\n\r\nHost b\r\n",
+		},
+		{
+			name: "no trailing newline stays without one",
+			in:   "Host a\n    User x",
+			edit: func(c *config.Config) { config.AddBlock(c, "b") },
+			want: "Host a\n    User x\nHost b",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := config.ParseBytes("cfg", []byte(tt.in))
+			tt.edit(&c)
+			if got := string(config.Serialize(&c)); got != tt.want {
+				t.Errorf("Serialize = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

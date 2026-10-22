@@ -43,29 +43,41 @@ func renderToken(t Token, inBlock bool, eol string) (text, ending string) {
 
 // Serialize renders the config back to bytes, preserving original raw lines where unchanged.
 func Serialize(c *Config) []byte {
-	eol := dominantEOL(c.Original)
+	return serializeFile(c.Global.Tokens, c.Blocks, c.Original)
+}
+
+// serializeFile renders one file: the tokens before its first Host/Match and
+// its blocks. original is that file's bytes as read, which decide the line
+// ending for rewritten lines and whether the file ends with a newline.
+func serializeFile(global []Token, blocks []Block, original []byte) []byte {
+	eol := dominantEOL(original)
 
 	type line struct{ text, ending string }
-	lines := make([]line, 0, len(c.Global.Tokens))
+	lines := make([]line, 0, len(global))
 
-	for _, token := range c.Global.Tokens {
+	for _, token := range global {
 		text, ending := renderToken(token, false, eol)
 		lines = append(lines, line{text, ending})
 	}
-	for _, block := range c.Blocks {
+	lastEmpty := len(global) > 0 && global[len(global)-1].Type == EMPTY
+	for _, block := range blocks {
 		for _, token := range block.Tokens {
 			text, ending := renderToken(token, true, eol)
 			lines = append(lines, line{text, ending})
+			lastEmpty = token.Type == EMPTY
 		}
 	}
 
-	// The token list already carries the file's trailing newline as a final empty
-	// token, so the last line's ending is dropped rather than trimmed off the
-	// finished string: trimming cannot tell a content '\r' from a CRLF ending.
+	// A file's trailing newline is carried as a final empty token, so the last
+	// line's ending is normally dropped rather than trimmed off the finished
+	// string: trimming cannot tell a content '\r' from a CRLF ending. When edits
+	// leave something else last (a block added or moved to the end), that token
+	// takes the ending instead, so the file keeps ending with a newline.
+	keepFinal := !lastEmpty && (len(original) == 0 || bytes.HasSuffix(original, []byte("\n")))
 	var sb strings.Builder
 	for i, l := range lines {
 		sb.WriteString(l.text)
-		if i < len(lines)-1 {
+		if i < len(lines)-1 || keepFinal {
 			sb.WriteString(l.ending)
 		}
 	}
