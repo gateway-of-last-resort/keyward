@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -144,10 +145,12 @@ func CreateBackup(sshDir, vaultDir string, identity age.Identity) (BackupResult,
 		return BackupResult{}, ErrBackupFailed
 	}
 
-	filename := time.Now().Format("2006-01-02_15-04-05") + ".tar.age"
-	finalPath := filepath.Join(backupPath, filename)
-
+	finalPath, err := reserveName(backupPath, time.Now().Format("2006-01-02_15-04-05"), ".tar.age")
+	if err != nil {
+		return BackupResult{}, ErrBackupFailed
+	}
 	if err := atomicWriteFile(finalPath, ciphertext, 0600); err != nil {
+		_ = os.Remove(finalPath)
 		return BackupResult{}, ErrBackupFailed
 	}
 
@@ -177,6 +180,30 @@ func readForBackup(path string, isMeta bool) ([]byte, os.FileInfo, error) {
 }
 
 const maxBackups = 5
+
+// reserveName creates an empty placeholder at dir/stem+ext, or at stem_01+ext,
+// stem_02+ext, ... if that is taken, and returns its path. Names have one-second
+// resolution, so two backups in the same second used to overwrite each other.
+// The "_NN" suffix sorts after the bare name, keeping name order chronological
+// for pruning and listing.
+func reserveName(dir, stem, ext string) (string, error) {
+	for i := 0; i < 100; i++ {
+		name := stem + ext
+		if i > 0 {
+			name = fmt.Sprintf("%s_%02d%s", stem, i, ext)
+		}
+		path := filepath.Join(dir, name)
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return path, f.Close()
+	}
+	return "", fmt.Errorf("no free name for %s%s in %s", stem, ext, dir)
+}
 
 const (
 	// maxBackupSize caps the encrypted archive we buffer into memory on restore.

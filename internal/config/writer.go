@@ -175,10 +175,39 @@ func backup(path string) error {
 		return err
 	}
 
-	timestamp := time.Now().Format("2006-01-02_15-04-05")
-	historyPath := filepath.Join(backupDir, "config_"+timestamp+".bak")
+	historyPath, err := reserveName(backupDir, "config_"+time.Now().Format("2006-01-02_15-04-05"), ".bak")
+	if err != nil {
+		return err
+	}
+	if err := WriteAtomic(historyPath, data); err != nil {
+		_ = os.Remove(historyPath)
+		return err
+	}
+	return nil
+}
 
-	return WriteAtomic(historyPath, data)
+// reserveName creates an empty placeholder at dir/stem+ext, or at stem_01+ext,
+// stem_02+ext, ... if that is taken, and returns its path. History names have
+// one-second resolution, so two saves in the same second used to overwrite the
+// earlier copy. The "_NN" suffix sorts after the bare name, so rotateBackup's
+// name order stays chronological.
+func reserveName(dir, stem, ext string) (string, error) {
+	for i := 0; i < 100; i++ {
+		name := stem + ext
+		if i > 0 {
+			name = fmt.Sprintf("%s_%02d%s", stem, i, ext)
+		}
+		path := filepath.Join(dir, name)
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return path, f.Close()
+	}
+	return "", fmt.Errorf("no free name for %s%s in %s", stem, ext, dir)
 }
 
 func rotateBackup(dir string) error {

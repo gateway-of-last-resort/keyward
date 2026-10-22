@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/gateway-of-last-resort/keyward/internal/config"
@@ -116,5 +117,44 @@ func TestSerialize_TrailingNewlineAfterEdits(t *testing.T) {
 				t.Errorf("Serialize = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// Two saves within one second must leave two history copies; the second used to
+// overwrite the first, losing the version before the first save.
+func TestSave_SameSecondKeepsHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path := filepath.Join(home, "config")
+	if err := os.WriteFile(path, []byte("Host a\n    User v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"v2", "v3"} {
+		config.SetParam(&c.Blocks[0], "User", []string{v})
+		c.Modified = true
+		if err := config.Save(&c); err != nil {
+			t.Fatalf("Save %s: %v", v, err)
+		}
+	}
+
+	history, err := filepath.Glob(filepath.Join(home, ".keyward", "backups", "config", "config_*.bak"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bodies []string
+	for _, h := range history {
+		b, err := os.ReadFile(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, string(b))
+	}
+	if len(bodies) != 2 || !strings.Contains(bodies[0], "v1") || !strings.Contains(bodies[1], "v2") {
+		t.Errorf("history copies = %q, want the v1 and v2 versions in order", bodies)
 	}
 }

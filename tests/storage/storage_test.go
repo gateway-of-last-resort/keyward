@@ -921,3 +921,45 @@ func TestCreateBackup_Recursive(t *testing.T) {
 		t.Error("top-level known_hosts must stay out of the backup")
 	}
 }
+
+// Backup names have one-second resolution. Back-to-back backups (a double 'b',
+// cron plus a manual run) must each get their own file instead of silently
+// replacing the previous archive, and the newest must sort last for pruning.
+func TestCreateBackup_SameSecondKeepsBoth(t *testing.T) {
+	sshDir, vaultDir := t.TempDir(), t.TempDir()
+	id := newIdentity(t)
+	if err := os.WriteFile(filepath.Join(sshDir, "config"), []byte("Host a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var paths []string
+	for range 3 {
+		res, err := storage.CreateBackup(sshDir, vaultDir, id)
+		if err != nil {
+			t.Fatalf("CreateBackup: %v", err)
+		}
+		paths = append(paths, res.Path)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(vaultDir, "backups"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tar.age") {
+			names = append(names, e.Name())
+		}
+	}
+	if len(names) != 3 {
+		t.Fatalf("backups on disk = %v, want 3 distinct archives", names)
+	}
+	if names[len(names)-1] != filepath.Base(paths[2]) {
+		t.Errorf("newest backup %s does not sort last in %v", filepath.Base(paths[2]), names)
+	}
+	for _, p := range paths {
+		if err := storage.RestoreBackup(p, t.TempDir(), t.TempDir(), id); err != nil {
+			t.Errorf("restore %s: %v", filepath.Base(p), err)
+		}
+	}
+}
