@@ -93,9 +93,9 @@ func khHostLabel(e knownhosts.Entry) string {
 		return "(unknown)"
 	}
 	if len(e.Hosts) == 1 {
-		return e.Hosts[0]
+		return safeDisplay(e.Hosts[0])
 	}
-	return fmt.Sprintf("%s +%d", e.Hosts[0], len(e.Hosts)-1)
+	return fmt.Sprintf("%s +%d", safeDisplay(e.Hosts[0]), len(e.Hosts)-1)
 }
 
 // --- known_hosts column widths ---

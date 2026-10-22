@@ -119,7 +119,7 @@ func (m auditModel) view() string {
 		sb.WriteString(line + "\n")
 
 		if selected && res.Fix != "" {
-			sb.WriteString("        " + dimStyle.Render("fix: "+res.Fix) + "\n")
+			sb.WriteString("        " + dimStyle.Render("fix: "+safeDisplay(res.Fix)) + "\n")
 		}
 	}
 

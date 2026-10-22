@@ -496,7 +496,7 @@ func (m keyDetailModel) view() string {
 	var sb strings.Builder
 
 	title := sectionHeaderStyle.Width(m.width).Render(
-		"Key: " + fitLeft(k.IdentityPath(), m.width-10),
+		"Key: " + fitLeft(safeDisplay(k.IdentityPath()), m.width-10),
 	)
 	sb.WriteString(title + "\n\n")
 
@@ -509,7 +509,7 @@ func (m keyDetailModel) view() string {
 
 	field("Algorithm", k.Algorithm)
 	field("Bit size", fmt.Sprintf("%d", k.BitSize))
-	field("Comment", ifEmpty(k.Comment, "—"))
+	field("Comment", ifEmpty(safeDisplay(k.Comment), "—"))
 	field("Fingerprint", ifEmpty(k.Fingerprint, "—"))
 	// ModifiedAt is only read off a private file that parsed.
 	modified := "—"
@@ -528,14 +528,14 @@ func (m keyDetailModel) view() string {
 	}
 	switch {
 	case k.PrivateKeyPath != "":
-		field("Private path", k.PrivateKeyPath)
+		field("Private path", safeDisplay(k.PrivateKeyPath))
 	case k.UnparsedPrivatePath != "":
-		field("Private path", k.UnparsedPrivatePath+"  "+warnMsgStyle.Render("(not recognized)"))
+		field("Private path", safeDisplay(k.UnparsedPrivatePath)+"  "+warnMsgStyle.Render("(not recognized)"))
 	default:
 		field("Private path", "—")
 	}
 	if k.PublicKeyPath != "" {
-		field("Public path", k.PublicKeyPath)
+		field("Public path", safeDisplay(k.PublicKeyPath))
 	}
 
 	if m.confirmRotate {
@@ -593,7 +593,7 @@ func (m keyDetailModel) view() string {
 			s := severityStyle[f.Severity]
 			fmt.Fprintf(&sb, "  %s  %s\n", s.Render(fmt.Sprintf("%-8s", string(f.Severity))), f.Message)
 			if f.Fix != "" {
-				fmt.Fprintf(&sb, "            %s\n", dimStyle.Render("fix: "+f.Fix))
+				fmt.Fprintf(&sb, "            %s\n", dimStyle.Render("fix: "+safeDisplay(f.Fix)))
 			}
 		}
 	}
@@ -607,7 +607,7 @@ func (m keyDetailModel) view() string {
 		prompt := "delete key files?"
 		if k.UnparsedPrivatePath != "" {
 			prompt = "delete key files, including the unrecognized " +
-				filepath.Base(k.UnparsedPrivatePath) + "?"
+				safeDisplay(filepath.Base(k.UnparsedPrivatePath)) + "?"
 		}
 		sb.WriteString("\n" + warnMsgStyle.Render(prompt+" press d again to confirm · esc to cancel"))
 	}

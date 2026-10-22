@@ -729,7 +729,7 @@ func (m configModel) renderBlocks(width int) string {
 			m.renameInput.Width = m.blockEditWidth()
 			sb.WriteString(rowGutter(true) + m.renameInput.View() + "\n")
 		} else {
-			name := fitRight(b.Pattern, m.blockNameWidth())
+			name := fitRight(safeDisplay(b.Pattern), m.blockNameWidth())
 			var row string
 			switch {
 			case focused && i == m.blockCursor && !m.addingBlock:

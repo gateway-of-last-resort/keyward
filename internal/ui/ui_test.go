@@ -1340,6 +1340,37 @@ func TestDetail_RotateOnlyForSupportedAlgorithms(t *testing.T) {
 	}
 }
 
+// A key comment and a file name are free text off disk. Rendered raw, an ESC
+// sequence in them would drive the terminal (OSC 52 rewrites the clipboard), so
+// the key list and the detail screen must strip control characters.
+func TestKeys_StripControlCharsFromDiskStrings(t *testing.T) {
+	hostile := "evil\x1b]52;c;cm0gLXJmIH4=\x07\u009b2J"
+	key := keys.Key{
+		PrivateKeyPath: "/ssh/id_" + hostile, PublicKeyPath: "/ssh/id_" + hostile + ".pub",
+		Algorithm: "ssh-ed25519", Fingerprint: "SHA256:x", Comment: hostile,
+	}
+	results := []audit.AuditResult{{
+		KeyPath: key.IdentityPath(), Severity: audit.Critical, Category: audit.CategoryKey,
+		Message: "Permissions must be 0600", Fix: "chmod 600 " + key.PrivateKeyPath,
+	}}
+
+	list := newKeyListModel([]keys.Key{key}, results, "/ssh")
+	list.width, list.height = 160, 20
+	detail := newKeyDetailModel(key, results, nil, false)
+	detail.width, detail.height = 160, 40
+
+	for name, out := range map[string]string{"list": list.view(), "detail": detail.view()} {
+		for _, b := range []byte{0x1b, 0x07, 0x9b} {
+			if strings.IndexByte(out, b) >= 0 {
+				t.Errorf("%s view contains control byte %#x:\n%q", name, b, out)
+			}
+		}
+	}
+	if !strings.Contains(detail.view(), "evil]52;c;cm0gLXJmIH4=2J") {
+		t.Error("the printable part of the comment should still be shown")
+	}
+}
+
 // Saving the config triggers a rescan. That rescan used to rebuild the editor,
 // so the "saved" message vanished at once and the cursor jumped to the first
 // host; the editor must keep both.
