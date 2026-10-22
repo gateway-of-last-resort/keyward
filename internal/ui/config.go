@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -304,10 +305,16 @@ func (m configModel) update(msg tea.Msg) (configModel, tea.Cmd) {
 			}
 		case "s":
 			if m.cfg.Modified {
-				if err := config.Save(m.cfg); err != nil {
+				err := config.Save(m.cfg)
+				switch {
+				case errors.Is(err, config.ErrPruneFailed):
+					m.saveErr = nil
+					m.saveMsg = "✓  saved (warning: old backups not pruned)"
+					m.saved = true
+				case err != nil:
 					m.saveErr = err
 					m.saveMsg = "✗  save failed: " + err.Error()
-				} else {
+				default:
 					m.saveErr = nil
 					m.saveMsg = "✓  saved"
 					m.saved = true
@@ -483,6 +490,21 @@ func (m configModel) createConfig() (configModel, tea.Cmd) {
 // The editor is rebuilt from the root's cfg on every visit, so without it the
 // new config and any unsaved edits vanished on the next tab switch.
 type configCreatedMsg struct{ cfg *config.Config }
+
+// withConfig swaps in a freshly loaded config while keeping the editor's
+// selection and status line, clamping the cursors to the new config.
+func (m configModel) withConfig(cfg *config.Config) configModel {
+	m.cfg = cfg
+	if cfg == nil || len(cfg.Blocks) == 0 {
+		m.blockCursor, m.paramCursor, m.paneRight = 0, 0, false
+		return m
+	}
+	m.blockCursor = min(m.blockCursor, len(cfg.Blocks)-1)
+	if n := len(paramTokens(cfg.Blocks[m.blockCursor])); m.paramCursor >= n {
+		m.paramCursor = max(n-1, 0)
+	}
+	return m
+}
 
 // ── navigation helpers ────────────────────────────────────────────────────────
 

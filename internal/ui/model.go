@@ -500,12 +500,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
+		sameDir := msg.sshDir == m.sshDir
 		m.sshDir = msg.sshDir
 		m.settingsView.sshDir = msg.sshDir
 		m.keys = msg.keys
 		m.report = msg.report
 		m.cfg = msg.cfg // nil if no config found at new SSH dir
-		m.cfgEditor = newConfigModel(m.cfg, m.sshDir)
+		if sameDir {
+			// A rescan after a config save: keep the editor's cursor and its
+			// "saved" message instead of rebuilding it, which wiped both.
+			m.cfgEditor = m.cfgEditor.withConfig(m.cfg)
+		} else {
+			m.cfgEditor = newConfigModel(m.cfg, m.sshDir)
+		}
 		m.keyList = newKeyListModel(m.keys, m.report.Results, m.sshDir)
 		// Rebuilding those two screens drops their width/height; push the sizes
 		// back before returning. Without this the panes render with height 0 —

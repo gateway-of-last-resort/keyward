@@ -1324,6 +1324,60 @@ func TestDetail_RotateOnlyForSupportedAlgorithms(t *testing.T) {
 	}
 }
 
+// Saving the config triggers a rescan. That rescan used to rebuild the editor,
+// so the "saved" message vanished at once and the cursor jumped to the first
+// host; the editor must keep both.
+func TestConfig_SaveKeepsStatusAndCursor(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sshDir, "config")
+	if err := os.WriteFile(path, []byte("Host a\n    User x\n\nHost b\n    User y\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := Model{active: ScreenConfig, sshDir: sshDir, cfg: &c, width: 100, height: 30}
+	m, _ = m.navigate(navigateMsg{to: ScreenConfig})
+
+	m.cfgEditor, _ = m.cfgEditor.update(k("down")) // select host b
+	m.cfgEditor, _ = m.cfgEditor.update(k("r"))
+	m.cfgEditor.renameInput.SetValue("b2")
+	m.cfgEditor, _ = m.cfgEditor.update(k("enter"))
+
+	next, cmd := m.Update(k("s"))
+	m = next.(Model)
+	reload := runCmd(cmd)
+	if batch, ok := reload.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if msg, ok := runCmd(c).(keysReloadedMsg); ok {
+				reload = msg
+			}
+		}
+	}
+	if _, ok := reload.(keysReloadedMsg); !ok {
+		t.Fatalf("save did not trigger a rescan; got %T", reload)
+	}
+	next, _ = m.Update(reload)
+	m = next.(Model)
+
+	if !strings.Contains(m.cfgEditor.saveMsg, "saved") {
+		t.Errorf("saveMsg after the rescan = %q, want the saved message", m.cfgEditor.saveMsg)
+	}
+	if m.cfgEditor.blockCursor != 1 {
+		t.Errorf("blockCursor after the rescan = %d, want 1 (host b2)", m.cfgEditor.blockCursor)
+	}
+	if got := m.cfgEditor.cfg.Blocks[1].Pattern; got != "b2" {
+		t.Errorf("editor shows %q, want the reloaded b2", got)
+	}
+}
+
 // ── §9 backup restore bounds ────────────────────────────────────────────────
 
 // §9.5 — out-of-range restore selection reports an error, never crashes.
