@@ -1454,11 +1454,14 @@ func TestBackup_RestoreRequiresConfirmation(t *testing.T) {
 		t.Fatalf("cancel must not run a command; got %#v", runCmd(cmd))
 	}
 
-	// "y" with a locked vault (identity nil) proceeds to the password prompt,
-	// not straight into RestoreBackup.
-	confirmed, _ := m.update(k("y"))
-	if confirmed.promptStep != stepPasswd {
-		t.Fatalf("y with locked vault should go to stepPasswd; got %v", confirmed.promptStep)
+	// "y" without an unlocked identity reports the locked vault instead of
+	// restoring; the screen is only reachable after unlock.
+	confirmed, cmd := m.update(k("y"))
+	if cmd != nil {
+		t.Fatalf("y with a locked vault must not run a command; got %#v", runCmd(cmd))
+	}
+	if !confirmed.isError || confirmed.statusMsg == "" {
+		t.Fatalf("y with a locked vault should report an error; got %q", confirmed.statusMsg)
 	}
 }
 
