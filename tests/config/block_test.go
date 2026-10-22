@@ -300,3 +300,30 @@ func TestToggleLine_HostLine_ReturnsFalse(t *testing.T) {
 		t.Error("ToggleLine on HOST token should return false")
 	}
 }
+
+// Uncommenting "# Host old" inside a block would write a real Host line there:
+// on the next load it starts a new block and steals every line after it. Such
+// comments must stay comments.
+func TestToggleAt_RefusesBlockKeywords(t *testing.T) {
+	for _, line := range []string{"# Host old", "#Match host x", "# host=lower"} {
+		t.Run(line, func(t *testing.T) {
+			c := config.ParseBytes("cfg", []byte("Host a\n    User x\n"+line+"\n    Port 22\n"))
+			blk := &c.Blocks[0]
+			idx := -1
+			for i, tok := range blk.Tokens {
+				if tok.Type == config.COMMENT {
+					idx = i
+				}
+			}
+			if idx < 0 {
+				t.Fatal("comment token not found in block")
+			}
+			if config.ToggleAt(blk, idx) {
+				t.Fatal("ToggleAt turned a block keyword into a parameter")
+			}
+			if blk.Tokens[idx].Type != config.COMMENT {
+				t.Errorf("token type = %v, want COMMENT", blk.Tokens[idx].Type)
+			}
+		})
+	}
+}

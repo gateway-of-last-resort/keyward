@@ -1209,6 +1209,22 @@ func TestConfig_AddParamUnknownKeyword(t *testing.T) { // §8.7
 	}
 }
 
+// Host and Match open blocks; added as a parameter they would split the block
+// they were added to once the file is written and read back.
+func TestConfig_AddParamRejectsBlockKeywords(t *testing.T) {
+	for _, key := range []string{"Host", "match"} {
+		cfg, dir := loadConfig(t)
+		m := newConfigModel(cfg, dir)
+		m, _ = m.update(k("enter")) // open the first block's parameters
+		m, _ = m.update(k("a"))
+		m, _ = m.update(k(key))
+		m, _ = m.update(k("enter"))
+		if m.addParamErr == "" {
+			t.Errorf("%s accepted as a parameter key", key)
+		}
+	}
+}
+
 func TestConfig_PortValidation(t *testing.T) { // §8.8
 	for _, tc := range []struct{ val, want string }{
 		{"abc", "must be a number"},

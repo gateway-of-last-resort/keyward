@@ -132,6 +132,9 @@ func validateParamKey(key string) error {
 	if !config.IsValidSSHKeyword(key) {
 		return fmt.Errorf("unknown SSH keyword %q", key)
 	}
+	if config.IsBlockKeyword(key) {
+		return fmt.Errorf("%s starts a new block; add it with 'a' in the Hosts pane", key)
+	}
 	return nil
 }
 
