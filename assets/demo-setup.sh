@@ -13,8 +13,9 @@
 #
 # The sandbox keys are deliberately anonymized (dev@laptop / dev@github /
 # deploy@server) and the RSA key is intentionally passphrase-less + 2048-bit so
-# the audit screen lands on grade C — that "not everything is OK" state is what
-# the demo walks through.
+# the audit opens on grade C; demo.tape rotates that key and the grade improves.
+# inbox/work_ed25519 is a key outside ~/.ssh for the `keyward import` step of
+# cli-demo.tape.
 set -euo pipefail
 
 SB=/tmp/dev
@@ -60,7 +61,12 @@ write_known_hosts() {
 # the pristine config, but keep the seed keys so you can re-record immediately.
 if [[ "${1:-}" == "--reset" ]]; then
 	rm -rf "$SB/.keyward"
-	rm -f "$SSH/ci_ed25519" "$SSH/ci_ed25519.pub"
+	rm -f "$SSH/ci_ed25519" "$SSH/ci_ed25519.pub" "$SSH/work_ed25519" "$SSH/work_ed25519.pub"
+	# demo.tape rotates prod_rsa; put the original 2048-bit key back.
+	if [[ -f "$SSH/prod_rsa.bak" ]]; then
+		mv "$SSH/prod_rsa.bak" "$SSH/prod_rsa"
+		mv "$SSH/prod_rsa.pub.bak" "$SSH/prod_rsa.pub"
+	fi
 	rm -f "$SSH/config.bak" "$SSH"/*.pre-restore 2>/dev/null || true
 	write_config
 	write_known_hosts
@@ -78,6 +84,9 @@ ssh-keygen -t ed25519 -C "dev@laptop"  -N "correct horse" -f "$SSH/id_ed25519"  
 ssh-keygen -t ed25519 -C "dev@github"  -N "battery staple" -f "$SSH/github_ed25519" >/dev/null
 ssh-keygen -t rsa -b 2048 -C "deploy@server" -N "" -f "$SSH/prod_rsa"               >/dev/null
 chmod 600 "$SSH"/id_ed25519 "$SSH"/github_ed25519 "$SSH"/prod_rsa
+
+mkdir -p "$SB/inbox"
+ssh-keygen -t ed25519 -C "dev@work" -N "work pass" -f "$SB/inbox/work_ed25519" >/dev/null
 
 write_config
 write_known_hosts
