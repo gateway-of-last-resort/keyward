@@ -1,4 +1,9 @@
-# keyward full demo — setup → keys/detail/metadata → audit → config editing → generate → known hosts → backup
+# keyward full demo: setup, search, metadata, agent, rotation, audit, config,
+# generate, known hosts, backup and restore
+#
+# Precondition:
+#   cd assets && ./demo-setup.sh && go build -o /tmp/dev/keyward ../cmd/keyward
+#   HOME=/tmp/dev vhs demo.tape
 Output demo.gif
 
 Set Shell "bash"
@@ -8,120 +13,129 @@ Set Height 900
 Set Padding 24
 Set WindowBar Colorful
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 45ms
+Set TypingSpeed 65ms
 
 # --- hidden: sandbox HOME + truecolor so the gradient renders smoothly ---
 Hide
 Type `export HOME="/tmp/dev"; export COLORTERM=truecolor; export PS1="$ "; eval "$(ssh-agent -s)" >/dev/null; cd "$HOME"; clear`
 Enter
-Sleep 500ms
+Sleep 1000ms
 Show
 
 Type "./keyward"
 Enter
-Sleep 1200ms
+Sleep 2400ms
 
 # ── first run: create the encrypted vault ────────────────────────────────
 Type "demo-vault-42"
 Enter
 Type "demo-vault-42"
-Sleep 300ms
+Sleep 600ms
 Enter
-Sleep 1600ms
+Wait+Screen@10s /SSH Keys/
+Sleep 3200ms
 
-# ── keys list → open the CRITICAL rsa key ────────────────────────────────
-Down
-Down
-Sleep 400ms
+# ── search the key list, open the CRITICAL rsa key ───────────────────────
+Type "/"
+Sleep 600ms
+Type "prod"
+Sleep 1200ms
 Enter
-Sleep 1800ms
+Sleep 800ms
+Enter
+Sleep 3200ms
 
 # ── edit metadata: toggle tags, write a note ─────────────────────────────
 Type "e"
+Sleep 1400ms
+Right
+Right
+Space
 Sleep 700ms
 Right
-Right
 Space
-Sleep 350ms
-Right
-Space
-Sleep 350ms
+Sleep 700ms
 Down
 Type "legacy deploy key, rotate soon"
-Sleep 500ms
+Sleep 1000ms
 Ctrl+S
-Sleep 1100ms
+Sleep 2200ms
 
-# ── load this key into the ssh-agent (passphrase-less → loads at once) ────
+# ── load it into the ssh-agent: the result shows above the hints ─────────
 Type "A"
-Sleep 1600ms
-Escape
-Sleep 700ms
+Wait+Screen@10s /added to ssh-agent/
+Sleep 3200ms
 
-# ── audit: walk through findings ─────────────────────────────────────────
-Tab
+# ── rotate it: a new 4096-bit RSA key with a passphrase ──────────────────
+Type "r"
 Sleep 1400ms
-Down
-Sleep 650ms
-Down
-Sleep 650ms
-Down
-Sleep 900ms
-
-# ── config: switch hosts, browse params ──────────────────────────────────
-Tab
-Sleep 900ms
-Down
-Sleep 350ms
-Down
-Sleep 550ms
-Enter
-Sleep 550ms
-Down
-Sleep 300ms
-Down
-Sleep 450ms
-Escape
-Sleep 350ms
-
-# add a new host with params, edit one, save
-Type "a"
-Sleep 400ms
-Type "bastion"
-Sleep 250ms
 Enter
 Sleep 600ms
+Type "rotated-pass"
 Enter
-Sleep 450ms
+Type "rotated-pass"
+Sleep 800ms
+Enter
+Wait+Screen@30s /key rotated/
+Sleep 3200ms
+Escape
+Sleep 1200ms
+
+# ── audit: the grade went up after the rotation ──────────────────────────
+Tab
+Sleep 3000ms
+Down
+Sleep 1200ms
+Down
+Sleep 1800ms
+
+# ── config: browse, ask to delete a host (cancel), add one, save ─────────
+Tab
+Sleep 1800ms
+Down
+Sleep 700ms
+Down
+Sleep 1000ms
+Enter
+Sleep 1000ms
+Down
+Sleep 800ms
+Escape
+Sleep 800ms
+Type "d"
+Sleep 3200ms
+Escape
+Sleep 1000ms
+
 Type "a"
-Sleep 350ms
+Sleep 800ms
+Type "bastion"
+Sleep 500ms
+Enter
+Sleep 1200ms
+Enter
+Sleep 900ms
+Type "a"
+Sleep 700ms
 Type "HostName"
 Enter
 Type "10.0.0.1"
 Enter
-Sleep 500ms
+Sleep 1000ms
 Type "a"
-Sleep 250ms
+Sleep 500ms
 Type "User"
 Enter
 Type "ops"
 Enter
-Sleep 500ms
-Up
-Sleep 300ms
-Type "e"
-Sleep 400ms
-Ctrl+U
-Type "10.0.0.5"
-Sleep 250ms
-Enter
-Sleep 550ms
+Sleep 1000ms
 Type "s"
-Sleep 1300ms
+Wait+Screen@10s /saved/
+Sleep 3200ms
 
 # ── generate a new protected ed25519 key ─────────────────────────────────
 Tab
-Sleep 900ms
+Sleep 1800ms
 Down
 Type "ci_ed25519"
 Down
@@ -132,33 +146,39 @@ Type "s3cret-pass"
 Down
 Type "s3cret-pass"
 Down
-Sleep 350ms
+Sleep 700ms
 Enter
-Sleep 2200ms
+Wait+Screen@10s /generated/
+Sleep 3200ms
 
-# ── known hosts: browse entries, forget one ──────────────────────────────
-# generate returns to the Keys screen; tab across to Known Hosts (now between
-# Generate and Backup in the tab bar).
+# ── known hosts: forget one, confirmed at the bottom ─────────────────────
+# generate returns to the Keys screen; Known Hosts is four tabs away.
 Tab
-Sleep 250ms
+Sleep 500ms
 Tab
-Sleep 250ms
+Sleep 500ms
 Tab
-Sleep 250ms
+Sleep 500ms
 Tab
+Sleep 2000ms
+Down
 Sleep 1000ms
 Down
-Sleep 500ms
-Down
-Sleep 700ms
+Sleep 1200ms
 Type "d"
-Sleep 950ms
+Sleep 3000ms
 Type "d"
-Sleep 1300ms
+Wait+Screen@10s /forgot/
+Sleep 3200ms
 
-# ── encrypted backup of ~/.ssh ───────────────────────────────────────────
+# ── backup, then restore the selected backup ─────────────────────────────
 Tab
-Sleep 700ms
-Type "b"
-Sleep 2200ms
 Sleep 1400ms
+Type "b"
+Wait+Screen@15s /backup saved/
+Sleep 3200ms
+Type "r"
+Sleep 3600ms
+Type "y"
+Wait+Screen@15s /restored from/
+Sleep 3200ms
